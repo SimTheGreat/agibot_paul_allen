@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agibot X2 Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0a0a1a; --panel: #12122a; --border: #2a2a5a;
+  --text: #e0e0e0; --muted: #888; --accent: #00d4ff; --purple: #7b2ff7;
+}
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+
+/* Tabs */
+.header { background: linear-gradient(135deg, #1a1a3e, #0d0d2b); padding: 12px 20px; border-bottom: 2px solid var(--border); display: flex; align-items: center; gap: 15px; }
+.header h1 { font-size: 22px; background: linear-gradient(90deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.tabs { display: flex; gap: 4px; margin-left: 30px; }
+.tab { padding: 8px 18px; border-radius: 6px 6px 0 0; background: transparent; border: 1px solid transparent; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
+.tab:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+.tab.active { background: var(--panel); border-color: var(--border); border-bottom-color: var(--panel); color: var(--accent); }
+.status-dot { margin-left: auto; width: 10px; height: 10px; border-radius: 50%; background: #4eff4e; box-shadow: 0 0 6px #4eff4e; }
+
+.tab-content { display: none; padding: 20px; max-width: 1500px; margin: 0 auto; }
+.tab-content.active { display: block; }
+
+/* Panels */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+.panel h2 { font-size: 14px; color: #8888cc; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px; }
+.full { grid-column: 1 / -1; }
+
+/* Buttons */
+.btn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+.btn { padding: 10px 8px; border: 1px solid #3a3a6a; border-radius: 8px; background: #1a1a3e; color: #c0c0ff; font-size: 12px; cursor: pointer; transition: all 0.15s; text-align: center; font-weight: 500; user-select: none; }
+.btn:hover { background: #2a2a5e; border-color: #5a5aaa; transform: translateY(-1px); }
+.btn:active { transform: translateY(1px); }
+.btn.success { border-color: #3a6a3a; color: #88ff88; }
+.btn.danger { border-color: #6a3a3a; color: #ff8888; }
+.btn.warning { border-color: #6a6a3a; color: #ffff88; }
+.btn.primary { border-color: #3a5a8a; color: #88bbff; }
+.btn.sm { padding: 6px; font-size: 11px; }
+.emoji-grid { grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); }
+
+/* Inputs */
+.input { padding: 8px 12px; border: 1px solid #3a3a6a; border-radius: 8px; background: #1a1a3e; color: var(--text); font-size: 13px; outline: none; width: 100%; }
+.input:focus { border-color: #5a5aaa; }
+select.input { cursor: pointer; }
+.row { display: flex; gap: 8px; align-items: center; }
+
+/* Camera */
+.cam-box { background: #000; border-radius: 8px; min-height: 280px; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
+.cam-box img { max-width: 100%; max-height: 350px; }
+.cam-placeholder { color: #444; font-size: 13px; }
+
+/* 3D Viewer */
+.viewer3d { width: 100%; height: 400px; border-radius: 8px; overflow: hidden; background: #080818; }
+
+/* Walk */
+.walk-grid { display: grid; grid-template-areas: ". up ." "left stop right" ". down ."; grid-template-columns: 60px 60px 60px; gap: 6px; justify-content: center; }
+.walk-grid .btn { padding: 16px; font-size: 15px; }
+
+/* Log */
+.log { background: #080818; border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; font-family: 'Fira Code', monospace; font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
+
+/* Workflow */
+.wf-list { max-height: 300px; overflow-y: auto; }
+.wf-item { padding: 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+.wf-item .name { flex: 1; font-weight: 500; }
+.wf-step { padding: 8px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; background: #0a0a1a; font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.wf-step select, .wf-step input { font-size: 11px; padding: 4px 6px; }
+
+/* n8n */
+.n8n-status { padding: 6px 12px; border-radius: 6px; font-size: 12px; }
+.n8n-connected { background: #0a3d0a; color: #4eff4e; }
+.n8n-disconnected { background: #3d0a0a; color: #ff4e4e; }
+
+@media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>AGIBOT X2</h1>
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('control')">Controls</div>
+    <div class="tab" onclick="switchTab('sim')">3D Sim</div>
+    <div class="tab" onclick="switchTab('lidar')">LiDAR Map</div>
+    <div class="tab" onclick="switchTab('workflow')">Workflows</div>
+    <div class="tab" onclick="switchTab('n8n')">n8n</div>
+  </div>
+  <div class="status-dot" id="statusDot" title="Robot connection"></div>
+</div>
+
+<!-- ═══ TAB: Controls ═══ -->
+<div class="tab-content active" id="tab-control">
+  <div class="grid2">
+    <!-- Camera -->
+    <div class="panel">
+      <h2>Camera Feed</h2>
+      <div class="cam-box"><span class="cam-placeholder" id="camPH">Click START</span><img id="camImg" style="display:none"/></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn success" onclick="camStart()">START</button>
+        <button class="btn danger" onclick="camStop()">STOP</button>
+        <select class="input" id="camSel" style="flex:1">
+          <option value="depth">Depth Camera</option>
+          <option value="rgbd_front">RGBD Front</option>
+          <option value="stereo_left">Stereo Left</option>
+          <option value="stereo_right">Stereo Right</option>
+          <option value="head_front">Head Front</option>
+          <option value="head_rear">Head Rear</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Motions + Mode -->
+    <div class="panel">
+      <h2>Arm Motions</h2>
+      <div class="btn-grid">
+        <button class="btn" onclick="motion('wave_left')">Wave L</button>
+        <button class="btn" onclick="motion('wave_right')">Wave R</button>
+        <button class="btn" onclick="motion('handshake_left')">Shake L</button>
+        <button class="btn" onclick="motion('handshake_right')">Shake R</button>
+        <button class="btn" onclick="motion('raise_left')">Raise L</button>
+        <button class="btn" onclick="motion('raise_right')">Raise R</button>
+        <button class="btn" onclick="motion('airkiss_left')">Kiss L</button>
+        <button class="btn" onclick="motion('airkiss_right')">Kiss R</button>
+      </div>
+      <h2 style="margin-top:16px">Robot Mode</h2>
+      <div class="btn-grid">
+        <button class="btn success" onclick="setMode('stand')">Stand</button>
+        <button class="btn primary" onclick="setMode('locomotion')">Locomotion</button>
+        <button class="btn" onclick="setMode('joint')">Joint Lock</button>
+        <button class="btn" onclick="setMode('damping')">Damping</button>
+        <button class="btn danger" onclick="setMode('passive')">Passive</button>
+      </div>
+    </div>
+
+    <!-- Emoji -->
+    <div class="panel">
+      <h2>Face Emoji</h2>
+      <div class="btn-grid emoji-grid">
+        <button class="btn sm" onclick="emoji(1)">Blink</button>
+        <button class="btn sm" onclick="emoji(60)">Bored</button>
+        <button class="btn sm" onclick="emoji(70)">Abnormal</button>
+        <button class="btn sm" onclick="emoji(80)">Sleep</button>
+        <button class="btn sm" onclick="emoji(90)">Happy</button>
+        <button class="btn sm" onclick="emoji(100)">Sad</button>
+        <button class="btn sm" onclick="emoji(120)">Surprised</button>
+        <button class="btn sm" onclick="emoji(150)">Angry</button>
+        <button class="btn sm" onclick="emoji(190)">Furious</button>
+        <button class="btn sm" onclick="emoji(200)">Adore</button>
+      </div>
+      <h2 style="margin-top:16px">Text to Speech</h2>
+      <div class="row">
+        <input class="input" id="ttsInput" placeholder="Text to speak..." value="Hello I am Agibot X2"/>
+        <button class="btn success" onclick="speak()">Speak</button>
+      </div>
+    </div>
+
+    <!-- Walk -->
+    <div class="panel">
+      <h2>Walk Control</h2>
+      <div style="display:flex;gap:20px;align-items:flex-start">
+        <div class="walk-grid">
+          <button class="btn" style="grid-area:up" onmousedown="wk('f',0.3)">W</button>
+          <button class="btn" style="grid-area:left" onmousedown="wk('a',0.2)">A</button>
+          <button class="btn danger" style="grid-area:stop" onclick="wkStop()">X</button>
+          <button class="btn" style="grid-area:right" onmousedown="wk('a',-0.2)">D</button>
+          <button class="btn" style="grid-area:down" onmousedown="wk('f',-0.3)">S</button>
+        </div>
+        <div style="flex:1;font-size:12px">
+          <div style="font-family:monospace;color:var(--accent);margin-bottom:8px">
+            Fwd: <span id="wF">0.0</span> | Turn: <span id="wA">0.0</span>
+          </div>
+          <button class="btn success sm" onclick="walkInit()">Enable Walk</button>
+          <button class="btn danger sm" onclick="walkEnd()">Disable</button>
+          <p style="color:#555;font-size:10px;margin-top:6px">Set Locomotion mode first</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="panel full">
+      <h2>Log</h2>
+      <div class="log" id="logBox">Ready.\n</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ TAB: 3D Simulator ═══ -->
+<div class="tab-content" id="tab-sim">
+  <div class="grid2">
+    <div class="panel" style="grid-column:1/-1">
+      <h2>3D Robot Simulator</h2>
+      <div class="viewer3d" id="simViewer"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" onclick="simReset()">Reset View</button>
+        <button class="btn" onclick="simAnimate('wave')">Sim Wave</button>
+        <button class="btn" onclick="simAnimate('walk')">Sim Walk</button>
+        <button class="btn" onclick="simAnimate('idle')">Idle</button>
+        <span style="color:var(--muted);font-size:12px;margin-left:10px">Click + drag to rotate, scroll to zoom</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ TAB: LiDAR Map ═══ -->
+<div class="tab-content" id="tab-lidar">
+  <div class="panel">
+    <h2>LiDAR Point Cloud Map</h2>
+    <div class="viewer3d" id="lidarViewer"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn success" onclick="lidarStart()">Start LiDAR</button>
+      <button class="btn danger" onclick="lidarStop()">Stop</button>
+      <button class="btn" onclick="lidarClear()">Clear Map</button>
+      <span style="color:var(--muted);font-size:12px;margin-left:10px">Points: <span id="lidarCount">0</span></span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ TAB: Workflows ═══ -->
+<div class="tab-content" id="tab-workflow">
+  <div class="grid2">
+    <div class="panel">
+      <h2>Saved Workflows</h2>
+      <div class="wf-list" id="wfList"><p style="color:#555">No workflows yet. Create one!</p></div>
+      <button class="btn primary" style="margin-top:10px;width:100%" onclick="wfNew()">+ New Workflow</button>
+    </div>
+    <div class="panel">
+      <h2>Workflow Editor</h2>
+      <div class="row" style="margin-bottom:10px">
+        <input class="input" id="wfName" placeholder="Workflow name..." style="flex:1"/>
+        <button class="btn success" onclick="wfSave()">Save</button>
+        <button class="btn primary" onclick="wfRun()">Run</button>
+      </div>
+      <div id="wfSteps"></div>
+      <button class="btn sm" style="width:100%;margin-top:8px" onclick="wfAddStep()">+ Add Step</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ TAB: n8n ═══ -->
+<div class="tab-content" id="tab-n8n">
+  <div class="grid2">
+    <div class="panel">
+      <h2>n8n Webhook Connector</h2>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        Connect your Agibot to n8n workflows via webhooks.
+      </p>
+      <label style="font-size:12px;color:#8888cc">n8n Webhook URL</label>
+      <div class="row" style="margin-top:4px">
+        <input class="input" id="n8nUrl" placeholder="https://your-n8n.com/webhook/..."/>
+        <button class="btn success" onclick="n8nSave()">Save</button>
+      </div>
+      <div style="margin-top:16px">
+        <label style="font-size:12px;color:#8888cc">Test Payload (JSON)</label>
+        <textarea class="input" id="n8nPayload" rows="4" style="margin-top:4px;font-family:monospace;font-size:11px">{"event": "test", "robot": "agibot_x2"}</textarea>
+        <button class="btn primary" style="margin-top:8px" onclick="n8nTest()">Send Test Webhook</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Incoming Webhook (Robot API)</h2>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        n8n can control the robot by POSTing to this endpoint:
+      </p>
+      <div class="input" style="background:#080818;font-family:monospace;font-size:12px;color:var(--accent)">
+        POST http://<span id="hostAddr">localhost:5000</span>/api/webhook/robot
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin-top:12px">Example payloads:</p>
+      <pre class="log" style="max-height:250px">{
+  "action": "emoji",
+  "params": {"id": 90}
+}
+
+{
+  "action": "tts",
+  "params": {"text": "Hello from n8n!"}
+}
+
+{
+  "action": "motion",
+  "params": {"type": "wave_left"}
+}
+
+{
+  "action": "mode",
+  "params": {"mode": "stand"}
+}
+
+{
+  "action": "workflow",
+  "params": {"id": "workflow_id_here"}
+}</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Tabs ──
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'sim' && !simInited) initSim();
+  if (name === 'lidar' && !lidarInited) initLidar();
+}
+
+// ── Log ──
+function log(m) {
+  const b = document.getElementById('logBox');
+  b.textContent += `[${new Date().toLocaleTimeString()}] ${m}\n`;
+  b.scrollTop = b.scrollHeight;
+}
+async function api(url, opts) {
+  try { return await (await fetch(url, opts)).json(); }
+  catch(e) { log('Error: ' + e.message); return {error: e.message}; }
+}
+
+// ── Controls ──
+async function emoji(id) { log(`Emoji ${id}`); log((await api(`/api/emoji/${id}`)).result); }
+async function motion(a) { log(`Motion: ${a}`); log((await api(`/api/motion/${a}`)).result); }
+async function setMode(m) { log(`Mode: ${m}`); log((await api(`/api/mode/${m}`)).result); }
+async function speak() {
+  const t = document.getElementById('ttsInput').value;
+  log(`TTS: ${t}`);
+  log((await api('/api/tts', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:t})})).result);
+}
+document.getElementById('ttsInput').addEventListener('keydown', e => { if(e.key==='Enter'){speak();e.preventDefault();e.stopPropagation();} });
+
+// Camera
+const ROBOT_STREAM = 'http://10.104.218.77:8080';
+let camInt = null;
+function camStart() {
+  if(camInt) clearInterval(camInt);
+  const c = document.getElementById('camSel').value;
+  const img = document.getElementById('camImg');
+  const ph = document.getElementById('camPH');
+  log(`Camera: ${c}`);
+  // Tell robot server to subscribe to the topic
+  fetch(ROBOT_STREAM + '/camera/start?cam=' + c).catch(() => fetch('/api/camera/start?cam=' + c));
+  // Use direct MJPEG stream from robot
+  img.src = ROBOT_STREAM + '/camera/stream';
+  img.style.display = 'block';
+  ph.style.display = 'none';
+  img.onerror = () => {
+    // Fallback to polling frames
+    log('Direct stream failed, falling back to polling...');
+    img.onerror = null;
+    camInt = setInterval(() => {
+      const i = new Image();
+      i.onload = () => { img.src = i.src; img.style.display = 'block'; ph.style.display = 'none'; };
+      i.src = '/api/camera/frame?' + Date.now();
+    }, 150);
+  };
+}
+function camStop() {
+  if(camInt){clearInterval(camInt);camInt=null;}
+  const img = document.getElementById('camImg');
+  img.src = '';
+  img.style.display = 'none';
+  document.getElementById('camPH').style.display = 'block';
+  fetch(ROBOT_STREAM + '/camera/stop').catch(() => fetch('/api/camera/stop'));
+  log('Camera stopped.');
+}
+
+// Walk
+let wF=0,wA=0,walkOn=false;
+function wk(ax,d) {
+  if(!walkOn){log('Enable Walk first!');return;}
+  if(ax==='f')wF=Math.max(-1,Math.min(1,wF+d)); else wA=Math.max(-1,Math.min(1,wA+d));
+  document.getElementById('wF').textContent=wF.toFixed(1);
+  document.getElementById('wA').textContent=wA.toFixed(1);
+  api('/api/walk/vel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({f:wF,a:wA,l:0})});
+}
+function wkStop(){wF=0;wA=0;document.getElementById('wF').textContent='0.0';document.getElementById('wA').textContent='0.0';if(walkOn)api('/api/walk/vel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({f:0,a:0,l:0})});log('STOP');}
+async function walkInit(){log('Enabling walk...');await api('/api/walk/start');walkOn=true;}
+async function walkEnd(){await api('/api/walk/stop');walkOn=false;wF=0;wA=0;log('Walk disabled');}
+document.addEventListener('keydown', e => {
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT')return;
+  if(e.repeat)return;
+  switch(e.key){case 'w':case 'ArrowUp':wk('f',0.3);e.preventDefault();break;case 's':case 'ArrowDown':wk('f',-0.3);e.preventDefault();break;case 'a':case 'ArrowLeft':wk('a',0.2);e.preventDefault();break;case 'd':case 'ArrowRight':wk('a',-0.2);e.preventDefault();break;case ' ':wkStop();e.preventDefault();break;}
+});
+
+// ── 3D Simulator ──
+let simInited = false, simScene, simCamera, simRenderer, simRobot, simMixer, simClock;
+function initSim() {
+  simInited = true;
+  const el = document.getElementById('simViewer');
+  simScene = new THREE.Scene();
+  simScene.background = new THREE.Color(0x080818);
+  simCamera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.1, 100);
+  simCamera.position.set(2, 2, 3);
+  simCamera.lookAt(0, 0.8, 0);
+  simRenderer = new THREE.WebGLRenderer({antialias: true});
+  simRenderer.setSize(el.clientWidth, el.clientHeight);
+  simRenderer.setPixelRatio(window.devicePixelRatio);
+  el.appendChild(simRenderer.domElement);
+
+  // Lights
+  simScene.add(new THREE.AmbientLight(0x404060, 0.6));
+  const dl = new THREE.DirectionalLight(0xffffff, 0.8);
+  dl.position.set(3, 5, 3); simScene.add(dl);
+
+  // Grid
+  const grid = new THREE.GridHelper(10, 20, 0x2a2a5a, 0x1a1a3a);
+  simScene.add(grid);
+
+  // Simple robot model (stylized humanoid)
+  simRobot = new THREE.Group();
+  const mat = new THREE.MeshPhongMaterial({color: 0x4488cc, flatShading: true});
+  const matDark = new THREE.MeshPhongMaterial({color: 0x2a4466, flatShading: true});
+  const matAccent = new THREE.MeshPhongMaterial({color: 0x00d4ff, emissive: 0x004466});
+
+  // Torso
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.25), mat);
+  torso.position.y = 0.95; torso.name = 'torso'; simRobot.add(torso);
+
+  // Head
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.2, 0.2), mat);
+  head.position.y = 1.35; head.name = 'head'; simRobot.add(head);
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.12), matAccent);
+  face.position.set(0, 1.35, 0.101); simRobot.add(face);
+
+  // Arms
+  const armGeo = new THREE.BoxGeometry(0.1, 0.4, 0.1);
+  const lArm = new THREE.Mesh(armGeo, matDark);
+  lArm.position.set(-0.3, 0.9, 0); lArm.name = 'lArm'; simRobot.add(lArm);
+  const rArm = new THREE.Mesh(armGeo, matDark);
+  rArm.position.set(0.3, 0.9, 0); rArm.name = 'rArm'; simRobot.add(rArm);
+
+  // Legs
+  const legGeo = new THREE.BoxGeometry(0.12, 0.5, 0.12);
+  const lLeg = new THREE.Mesh(legGeo, matDark);
+  lLeg.position.set(-0.12, 0.35, 0); lLeg.name = 'lLeg'; simRobot.add(lLeg);
+  const rLeg = new THREE.Mesh(legGeo, matDark);
+  rLeg.position.set(0.12, 0.35, 0); rLeg.name = 'rLeg'; simRobot.add(rLeg);
+
+  // Feet
+  const footGeo = new THREE.BoxGeometry(0.14, 0.06, 0.2);
+  const lFoot = new THREE.Mesh(footGeo, mat);
+  lFoot.position.set(-0.12, 0.08, 0.03); simRobot.add(lFoot);
+  const rFoot = new THREE.Mesh(footGeo, mat);
+  rFoot.position.set(0.12, 0.08, 0.03); simRobot.add(rFoot);
+
+  simScene.add(simRobot);
+  simClock = new THREE.Clock();
+
+  // Mouse controls
+  let drag = false, prevX, prevY, theta = 0.8, phi = 0.6, radius = 4;
+  function updateCam() {
+    simCamera.position.set(radius*Math.sin(theta)*Math.cos(phi), radius*Math.sin(phi), radius*Math.cos(theta)*Math.cos(phi));
+    simCamera.lookAt(0, 0.8, 0);
+  }
+  simRenderer.domElement.addEventListener('mousedown', e => { drag=true; prevX=e.clientX; prevY=e.clientY; });
+  window.addEventListener('mouseup', () => drag=false);
+  window.addEventListener('mousemove', e => {
+    if(!drag) return;
+    theta -= (e.clientX-prevX)*0.01; phi += (e.clientY-prevY)*0.01;
+    phi = Math.max(-1.2, Math.min(1.2, phi));
+    prevX=e.clientX; prevY=e.clientY; updateCam();
+  });
+  simRenderer.domElement.addEventListener('wheel', e => { radius = Math.max(1.5, Math.min(10, radius + e.deltaY*0.005)); updateCam(); e.preventDefault(); });
+
+  // Animation loop
+  let animType = 'idle', animTime = 0;
+  window._simAnim = (type) => { animType = type; animTime = 0; };
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = simClock.getDelta();
+    animTime += dt;
+    const t = animTime;
+
+    const lArm = simRobot.getObjectByName('lArm');
+    const rArm = simRobot.getObjectByName('rArm');
+    const lLeg = simRobot.getObjectByName('lLeg');
+    const rLeg = simRobot.getObjectByName('rLeg');
+    const head = simRobot.getObjectByName('head');
+
+    if (animType === 'idle') {
+      // Gentle breathing
+      simRobot.position.y = Math.sin(t * 1.5) * 0.01;
+      lArm.rotation.z = 0; rArm.rotation.z = 0;
+      lLeg.rotation.x = 0; rLeg.rotation.x = 0;
+      head.rotation.y = Math.sin(t * 0.5) * 0.1;
+    } else if (animType === 'wave') {
+      rArm.rotation.z = -Math.PI/2 + Math.sin(t * 4) * 0.3;
+      rArm.position.y = 1.1;
+      lArm.rotation.z = 0;
+      head.rotation.y = Math.sin(t * 2) * 0.15;
+    } else if (animType === 'walk') {
+      const s = Math.sin(t * 4);
+      lLeg.rotation.x = s * 0.4;
+      rLeg.rotation.x = -s * 0.4;
+      lArm.rotation.x = -s * 0.3;
+      rArm.rotation.x = s * 0.3;
+      simRobot.position.y = Math.abs(Math.sin(t * 8)) * 0.02;
+      head.rotation.y = 0;
+    }
+    simRenderer.render(simScene, simCamera);
+  }
+  animate();
+}
+function simReset() { if(simInited) window._simAnim('idle'); }
+function simAnimate(type) { if(simInited) window._simAnim(type); }
+
+// ── LiDAR ──
+let lidarInited = false, lidarScene, lidarCamera, lidarRenderer, lidarPointCloud, lidarAllPoints = [];
+function initLidar() {
+  lidarInited = true;
+  const el = document.getElementById('lidarViewer');
+  lidarScene = new THREE.Scene();
+  lidarScene.background = new THREE.Color(0x080818);
+  lidarCamera = new THREE.PerspectiveCamera(60, el.clientWidth/el.clientHeight, 0.1, 500);
+  lidarCamera.position.set(0, 15, 15);
+  lidarCamera.lookAt(0, 0, 0);
+  lidarRenderer = new THREE.WebGLRenderer({antialias: true});
+  lidarRenderer.setSize(el.clientWidth, el.clientHeight);
+  el.appendChild(lidarRenderer.domElement);
+
+  const grid = new THREE.GridHelper(50, 50, 0x1a1a3a, 0x111128);
+  lidarScene.add(grid);
+
+  // Point cloud
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute([], 3));
+  const pmat = new THREE.PointsMaterial({size: 0.05, vertexColors: true, sizeAttenuation: true});
+  lidarPointCloud = new THREE.Points(geo, pmat);
+  lidarScene.add(lidarPointCloud);
+
+  // Robot marker
+  const marker = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.6, 4), new THREE.MeshBasicMaterial({color: 0x00d4ff}));
+  marker.rotation.x = -Math.PI/2; marker.position.y = 0.3;
+  lidarScene.add(marker);
+
+  // Mouse orbit
+  let drag=false,px,py,th=0,ph=0.8,r=20;
+  function uc(){lidarCamera.position.set(r*Math.sin(th)*Math.cos(ph),r*Math.sin(ph),r*Math.cos(th)*Math.cos(ph));lidarCamera.lookAt(0,0,0);}
+  lidarRenderer.domElement.addEventListener('mousedown',e=>{drag=true;px=e.clientX;py=e.clientY;});
+  window.addEventListener('mouseup',()=>drag=false);
+  window.addEventListener('mousemove',e=>{if(!drag)return;th-=(e.clientX-px)*0.01;ph+=(e.clientY-py)*0.01;ph=Math.max(0.1,Math.min(1.4,ph));px=e.clientX;py=e.clientY;uc();});
+  lidarRenderer.domElement.addEventListener('wheel',e=>{r=Math.max(3,Math.min(50,r+e.deltaY*0.02));uc();e.preventDefault();});
+
+  function animLidar() {
+    requestAnimationFrame(animLidar);
+    lidarRenderer.render(lidarScene, lidarCamera);
+  }
+  animLidar();
+}
+let lidarPollInt = null;
+function lidarStart() {
+  log('Starting LiDAR...');
+  fetch('/api/lidar/start');
+  if (lidarPollInt) clearInterval(lidarPollInt);
+  lidarPollInt = setInterval(async () => {
+    const r = await api('/api/lidar/points');
+    if (r.points && r.points.length > 0) {
+      lidarAllPoints = lidarAllPoints.concat(r.points);
+      if (lidarAllPoints.length > 50000) lidarAllPoints = lidarAllPoints.slice(-50000);
+      updateLidarCloud();
+    }
+  }, 500);
+}
+function lidarStop() { if(lidarPollInt){clearInterval(lidarPollInt);lidarPollInt=null;} fetch('/api/lidar/stop'); log('LiDAR stopped'); }
+function lidarClear() { lidarAllPoints = []; updateLidarCloud(); log('Map cleared'); }
+function updateLidarCloud() {
+  if (!lidarPointCloud) return;
+  const pos = [], col = [];
+  lidarAllPoints.forEach(p => {
+    pos.push(p[0], p[2], -p[1]); // ROS to Three.js coords
+    const h = Math.min(1, Math.max(0, (p[2] + 1) / 3));
+    col.push(h * 0.2, 0.5 + h * 0.5, 1 - h * 0.5); // height-based coloring
+  });
+  lidarPointCloud.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  lidarPointCloud.geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  lidarPointCloud.geometry.attributes.position.needsUpdate = true;
+  lidarPointCloud.geometry.attributes.color.needsUpdate = true;
+  document.getElementById('lidarCount').textContent = lidarAllPoints.length;
+}
+
+// ── Workflows ──
+let currentWf = {id: null, name: '', steps: []};
+function wfNew() { currentWf = {id: null, name: '', steps: []}; document.getElementById('wfName').value = ''; renderWfSteps(); }
+function wfAddStep() {
+  currentWf.steps.push({type: 'emoji', params: {id: 90}, delay: 0});
+  renderWfSteps();
+}
+function renderWfSteps() {
+  const el = document.getElementById('wfSteps');
+  el.innerHTML = '';
+  currentWf.steps.forEach((s, i) => {
+    const div = document.createElement('div');
+    div.className = 'wf-step';
+    div.innerHTML = `
+      <select onchange="wfStepType(${i},this.value)" class="input" style="width:100px">
+        <option value="emoji" ${s.type==='emoji'?'selected':''}>Emoji</option>
+        <option value="tts" ${s.type==='tts'?'selected':''}>TTS</option>
+        <option value="motion" ${s.type==='motion'?'selected':''}>Motion</option>
+        <option value="mode" ${s.type==='mode'?'selected':''}>Mode</option>
+        <option value="wait" ${s.type==='wait'?'selected':''}>Wait</option>
+        <option value="shell" ${s.type==='shell'?'selected':''}>Shell</option>
+        <option value="n8n_webhook" ${s.type==='n8n_webhook'?'selected':''}>n8n Hook</option>
+      </select>
+      <input class="input" style="flex:1" placeholder="params (JSON)" value='${JSON.stringify(s.params)}' onchange="wfStepParams(${i},this.value)"/>
+      <input class="input" style="width:60px" type="number" placeholder="delay" value="${s.delay||0}" onchange="wfStepDelay(${i},this.value)" title="Delay (seconds)"/>
+      <button class="btn danger sm" onclick="wfRemoveStep(${i})">X</button>
+    `;
+    el.appendChild(div);
+  });
+}
+function wfStepType(i, v) { currentWf.steps[i].type = v; }
+function wfStepParams(i, v) { try { currentWf.steps[i].params = JSON.parse(v); } catch {} }
+function wfStepDelay(i, v) { currentWf.steps[i].delay = parseFloat(v) || 0; }
+function wfRemoveStep(i) { currentWf.steps.splice(i, 1); renderWfSteps(); }
+
+async function wfSave() {
+  currentWf.name = document.getElementById('wfName').value || 'Untitled';
+  const r = await api('/api/workflows', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(currentWf)});
+  currentWf.id = r.id;
+  log(`Workflow saved: ${currentWf.name}`);
+  loadWfList();
+}
+async function wfRun() {
+  if (!currentWf.id) { log('Save workflow first!'); return; }
+  log(`Running workflow: ${currentWf.name}...`);
+  const r = await api(`/api/workflows/${currentWf.id}/run`, {method:'POST'});
+  (r.results||[]).forEach(s => log(`  Step ${s.step.type}: ${s.result}`));
+  log('Workflow complete.');
+}
+async function loadWfList() {
+  const wfs = await api('/api/workflows');
+  const el = document.getElementById('wfList');
+  if (!Array.isArray(wfs) || wfs.length === 0) { el.innerHTML = '<p style="color:#555">No workflows yet.</p>'; return; }
+  el.innerHTML = '';
+  wfs.forEach(w => {
+    const div = document.createElement('div');
+    div.className = 'wf-item';
+    div.innerHTML = `<span class="name">${w.name}</span><span style="color:var(--muted);font-size:11px">${(w.steps||[]).length} steps</span>
+      <button class="btn sm primary" onclick='loadWf(${JSON.stringify(JSON.stringify(w))})'>Edit</button>
+      <button class="btn sm success" onclick="runWfById('${w.id}')">Run</button>
+      <button class="btn sm danger" onclick="deleteWf('${w.id}')">Del</button>`;
+    el.appendChild(div);
+  });
+}
+function loadWf(json) { currentWf = JSON.parse(json); document.getElementById('wfName').value = currentWf.name; renderWfSteps(); }
+async function runWfById(id) { log('Running workflow...'); const r = await api(`/api/workflows/${id}/run`,{method:'POST'}); (r.results||[]).forEach(s=>log(`  ${s.step.type}: ${s.result}`)); }
+async function deleteWf(id) { await api(`/api/workflows/${id}`,{method:'DELETE'}); loadWfList(); }
+
+// ── n8n ──
+async function n8nSave() {
+  const url = document.getElementById('n8nUrl').value;
+  await api('/api/n8n/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({webhook_url:url})});
+  log('n8n webhook URL saved');
+}
+async function n8nTest() {
+  const url = document.getElementById('n8nUrl').value;
+  let payload;
+  try { payload = JSON.parse(document.getElementById('n8nPayload').value); }
+  catch { log('Invalid JSON payload'); return; }
+  log('Sending n8n webhook...');
+  const r = await api('/api/n8n/trigger', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url, payload})});
+  log(r.result || r.error);
+}
+
+// ── Init ──
+document.getElementById('hostAddr').textContent = location.host;
+loadWfList();
+renderWfSteps();
+</script>
+</body>
+</html>
