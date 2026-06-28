@@ -1,0 +1,24 @@
+[
+  {
+    "id": "demo_greet",
+    "name": "Greeting Sequence",
+    "steps": [
+      {"type": "emoji", "params": {"id": 90}, "delay": 0},
+      {"type": "tts", "params": {"text": "Hello! I am Agibot X2 Ultra. Nice to meet you!"}, "delay": 1},
+      {"type": "motion", "params": {"type": "wave_left"}, "delay": 2},
+      {"type": "emoji", "params": {"id": 200}, "delay": 1}
+    ]
+  },
+  {
+    "id": "demo_present",
+    "name": "Hackathon Demo",
+    "steps": [
+      {"type": "mode", "params": {"action": "STAND_DEFAULT"}, "delay": 0},
+      {"type": "tts", "params": {"text": "Welcome to our YC hackathon demo. I am an autonomous humanoid robot controlled through a web interface."}, "delay": 1},
+      {"type": "emoji", "params": {"id": 90}, "delay": 3},
+      {"type": "motion", "params": {"type": "wave_right"}, "delay": 1},
+      {"type": "tts", "params": {"text": "I can walk, wave, detect objects, and connect to n8n automation workflows."}, "delay": 2},
+      {"type": "motion", "params": {"type": "handshake_right"}, "delay": 2}
+    ]
+  }
+]

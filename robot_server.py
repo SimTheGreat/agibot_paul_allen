@@ -12,6 +12,7 @@ import threading
 import time
 import json
 import sys
+import os
 import struct
 import cv2
 import numpy as np
@@ -23,6 +24,8 @@ latest_frame = None
 frame_lock = threading.Lock()
 cam_proc = None
 cam_lock = threading.Lock()
+cam_active = False
+cam_current_topic = None
 
 lidar_points = []
 lidar_lock = threading.Lock()
@@ -32,28 +35,63 @@ lidar_proc = None
 # ── Camera streaming via subprocess ─────────────────────────────
 
 CAM_STREAMER = '''
-import rclpy, sys, struct
+import rclpy, sys, struct, cv2, numpy as np
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, Image
 
 TOPIC = sys.argv[1]
+IS_RAW = "/compressed" not in TOPIC and "compressedDepth" not in TOPIC
 
 class S(Node):
     def __init__(self):
         super().__init__("cam_sub")
-        qos = QoSProfile(reliability=QoSReliabilityPolicy.RELIABLE,
-                          history=QoSHistoryPolicy.KEEP_LAST, depth=1,
-                          durability=QoSDurabilityPolicy.VOLATILE)
-        self.create_subscription(CompressedImage, TOPIC, self.cb, qos)
+        msg_type = Image if IS_RAW else CompressedImage
+        for rel in [QoSReliabilityPolicy.RELIABLE, QoSReliabilityPolicy.BEST_EFFORT]:
+            for dur in [QoSDurabilityPolicy.TRANSIENT_LOCAL, QoSDurabilityPolicy.VOLATILE]:
+                qos = QoSProfile(reliability=rel,
+                                  history=QoSHistoryPolicy.KEEP_LAST, depth=1,
+                                  durability=dur)
+                self.create_subscription(msg_type, TOPIC, self.cb, qos)
         self.n = 0
+        sys.stderr.write(f"Subscribing to {TOPIC} as {'Image' if IS_RAW else 'CompressedImage'}\\n")
+        sys.stderr.flush()
+
     def cb(self, msg):
         self.n += 1
         if self.n % 2 != 0: return
-        d = bytes(msg.data)
-        sys.stdout.buffer.write(struct.pack(">I", len(d)))
-        sys.stdout.buffer.write(d)
-        sys.stdout.buffer.flush()
+        try:
+            if IS_RAW:
+                # Convert raw Image to JPEG
+                h, w = msg.height, msg.width
+                enc = msg.encoding
+                data = np.frombuffer(bytes(msg.data), dtype=np.uint8)
+                if enc == "rgb8":
+                    img = data.reshape(h, w, 3)
+                    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                elif enc == "bgr8":
+                    img = data.reshape(h, w, 3)
+                elif enc == "mono8":
+                    img = data.reshape(h, w)
+                elif enc == "bgra8":
+                    img = data.reshape(h, w, 4)
+                    img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+                elif enc == "rgba8":
+                    img = data.reshape(h, w, 4)
+                    img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+                else:
+                    img = data.reshape(h, w, -1)
+                ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                if not ok: return
+                d = jpeg.tobytes()
+            else:
+                d = bytes(msg.data)
+            sys.stdout.buffer.write(struct.pack(">I", len(d)))
+            sys.stdout.buffer.write(d)
+            sys.stdout.buffer.flush()
+        except Exception as e:
+            sys.stderr.write(f"Frame error: {e}\\n")
+            sys.stderr.flush()
 
 rclpy.init()
 rclpy.spin(S())
@@ -100,6 +138,52 @@ rclpy.spin(L())
 '''
 
 
+IMU_STREAMER = '''
+import rclpy, sys, json
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+from sensor_msgs.msg import Imu
+
+class I(Node):
+    def __init__(self):
+        super().__init__("imu_sub")
+        for rel in [QoSReliabilityPolicy.BEST_EFFORT, QoSReliabilityPolicy.RELIABLE]:
+            qos = QoSProfile(reliability=rel, history=QoSHistoryPolicy.KEEP_LAST,
+                              depth=1, durability=QoSDurabilityPolicy.VOLATILE)
+            self.create_subscription(Imu, "/aima/hal/imu/chest/state", self.cb, qos)
+            self.create_subscription(Imu, "/aima/hal/imu/torso/state", self.cb_torso, qos)
+        self.n = 0
+    def cb(self, msg):
+        self.n += 1
+        if self.n % 5 != 0: return
+        self._send("chest", msg)
+    def cb_torso(self, msg):
+        self.n += 1
+        if self.n % 5 != 0: return
+        self._send("torso", msg)
+    def _send(self, src, msg):
+        try:
+            d = {
+                "src": src,
+                "o": [msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w],
+                "av": [msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z],
+                "la": [msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z],
+            }
+            sys.stdout.write(json.dumps(d) + "\\n")
+            sys.stdout.flush()
+        except: pass
+
+rclpy.init()
+rclpy.spin(I())
+'''
+
+# Topics that need 180-degree flip
+FLIP_TOPICS = {
+    '/camera/depth/image_raw/compressedDepth',
+    '/aima/hal/sensor/rgb_head_front_center/rgb_image/compressed',
+    '/aima/hal/sensor/rgb_head_rear/rgb_image/compressed',
+}
+
 DDS_CONFIG = "/agibot/data/home/agi/.aima/env/ros_dds_configuration.xml"
 
 def get_ros_env():
@@ -119,12 +203,18 @@ def write_helper(name, script):
 
 
 def start_cam_process(topic):
-    global cam_proc, latest_frame
-    stop_cam_process()
+    global cam_proc, latest_frame, cam_active, cam_current_topic
+    # If same topic subprocess is already running, just resume
+    if cam_proc is not None and cam_proc.poll() is None and cam_current_topic == topic:
+        cam_active = True
+        return
+    # Different topic or no subprocess — kill old, start new
+    kill_cam_process()
     latest_frame = None
+    cam_current_topic = topic
+    cam_active = True
     script_path = write_helper("cam_sub", CAM_STREAMER)
 
-    # Use bash -i to get full ROS env (PYTHONPATH, LD_LIBRARY_PATH, FASTRTPS, etc.)
     proc = subprocess.Popen(
         ["bash", "-i", "-c", f"python3 -u {script_path} '{topic}'"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -142,6 +232,9 @@ def start_cam_process(topic):
                 data = proc.stdout.read(length)
                 if len(data) != length: continue
 
+                if not cam_active:
+                    continue  # paused, keep reading but don't update frame
+
                 is_depth = "compressedDepth" in topic
                 if is_depth:
                     if len(data) <= 12: continue
@@ -153,18 +246,11 @@ def start_cam_process(topic):
                     elif img.dtype == np.float32:
                         img = (img * 50).clip(0, 255).astype(np.uint8)
                     img = cv2.applyColorMap(img, cv2.COLORMAP_JET)
-                    img = cv2.flip(img, -1)
                     ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])
                     if not ok: continue
                     frame = jpeg.tobytes()
                 else:
-                    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-                    if img is not None:
-                        img = cv2.flip(img, -1)
-                        ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                        frame = jpeg.tobytes() if ok else data
-                    else:
-                        frame = data
+                    frame = data
 
                 with frame_lock:
                     latest_frame = frame
@@ -174,17 +260,30 @@ def start_cam_process(topic):
             with cam_lock:
                 if cam_proc == proc:
                     cam_proc = None
+                    cam_current_topic = None
 
     threading.Thread(target=reader, daemon=True).start()
 
 
-def stop_cam_process():
-    global cam_proc
+def pause_cam():
+    global cam_active, latest_frame
+    cam_active = False
+    latest_frame = None
+
+
+def kill_cam_process():
+    global cam_proc, cam_current_topic
     with cam_lock:
         if cam_proc:
-            try: cam_proc.kill()
+            try:
+                # Kill all children then parent
+                import signal
+                pid = cam_proc.pid
+                subprocess.run(["pkill", "-9", "-P", str(pid)], timeout=3)
+                cam_proc.kill()
             except: pass
             cam_proc = None
+            cam_current_topic = None
 
 
 def start_lidar_process():
@@ -194,7 +293,8 @@ def start_lidar_process():
 
     proc = subprocess.Popen(
         ["bash", "-i", "-c", f"python3 -u {script_path}"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
     lidar_proc = proc
 
     def reader():
@@ -217,19 +317,64 @@ def start_lidar_process():
 def stop_lidar_process():
     global lidar_proc
     if lidar_proc:
-        try: lidar_proc.kill()
+        try:
+            subprocess.run(["pkill", "-9", "-P", str(lidar_proc.pid)], timeout=3)
+            lidar_proc.kill()
         except: pass
         lidar_proc = None
+
+
+# ── IMU streaming ───────────────────────────────────────────────
+
+imu_data = {}
+imu_lock = threading.Lock()
+imu_proc = None
+
+
+def start_imu_process():
+    global imu_proc
+    stop_imu_process()
+    script_path = write_helper("imu_sub", IMU_STREAMER)
+    proc = subprocess.Popen(
+        ["bash", "-i", "-c", f"python3 -u {script_path}"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+    imu_proc = proc
+
+    def reader():
+        global imu_data, imu_proc
+        try:
+            for line in iter(proc.stdout.readline, b''):
+                try:
+                    d = json.loads(line.decode())
+                    with imu_lock:
+                        imu_data = d
+                except: pass
+        except: pass
+        finally:
+            if imu_proc == proc:
+                imu_proc = None
+    threading.Thread(target=reader, daemon=True).start()
+
+
+def stop_imu_process():
+    global imu_proc
+    if imu_proc:
+        try:
+            subprocess.run(["pkill", "-9", "-P", str(imu_proc.pid)], timeout=3)
+            imu_proc.kill()
+        except: pass
+        imu_proc = None
 
 
 # ── Routes ──────────────────────────────────────────────────────
 
 CAMERA_TOPICS = {
+    'head_front': '/aima/hal/sensor/rgb_head_front_center/rgb_image',
     'depth': '/camera/depth/image_raw/compressedDepth',
     'rgbd_front': '/aima/hal/sensor/rgbd_head_front/rgb_image/compressed',
     'stereo_left': '/aima/hal/sensor/stereo_head_front_left/rgb_image/compressed',
     'stereo_right': '/aima/hal/sensor/stereo_head_front_right/rgb_image/compressed',
-    'head_front': '/aima/hal/sensor/rgb_head_front_center/rgb_image/compressed',
     'head_rear': '/aima/hal/sensor/rgb_head_rear/rgb_image/compressed',
 }
 
@@ -241,16 +386,17 @@ def health():
 
 @app.route('/camera/start')
 def camera_start():
-    cam = request.args.get('cam', 'depth')
-    topic = CAMERA_TOPICS.get(cam, CAMERA_TOPICS['depth'])
+    cam = request.args.get('cam', 'head_front')
+    topic = CAMERA_TOPICS.get(cam, CAMERA_TOPICS['head_front'])
+    reused = (cam_proc is not None and cam_proc.poll() is None and cam_current_topic == topic)
     start_cam_process(topic)
-    return jsonify({"status": "started", "topic": topic})
+    return jsonify({"status": "resumed" if reused else "started", "topic": topic})
 
 
 @app.route('/camera/stop')
 def camera_stop():
-    stop_cam_process()
-    return jsonify({"status": "stopped"})
+    pause_cam()  # pause, don't kill — instant restart
+    return jsonify({"status": "paused"})
 
 
 @app.route('/camera/frame')
@@ -292,6 +438,25 @@ def lidar_points_route():
     with lidar_lock:
         pts = lidar_points
     return jsonify({"points": pts, "count": len(pts)})
+
+
+@app.route('/imu/start')
+def imu_start():
+    start_imu_process()
+    return jsonify({"status": "started"})
+
+
+@app.route('/imu/stop')
+def imu_stop():
+    stop_imu_process()
+    return jsonify({"status": "stopped"})
+
+
+@app.route('/imu/data')
+def imu_get_data():
+    with imu_lock:
+        d = imu_data.copy()
+    return jsonify(d)
 
 
 if __name__ == '__main__':

@@ -20,10 +20,108 @@ import base64
 import json
 import os
 import sys
+import io
+import cv2
+import numpy as np
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, Response, send_from_directory
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
+
+# ── AI Vision ───────────────────────────────────────────────────
+yolo_model = None
+yolo_enabled = False
+face_rec_enabled = False
+known_faces = {}  # name -> encoding
+FACES_DIR = Path(__file__).parent / "known_faces"
+
+def load_yolo():
+    global yolo_model
+    if yolo_model is None:
+        try:
+            from ultralytics import YOLO
+            yolo_model = YOLO("yolo11n.pt")
+            print("  YOLO model loaded.")
+        except Exception as e:
+            print(f"  YOLO load failed: {e}")
+
+def load_known_faces():
+    global known_faces
+    FACES_DIR.mkdir(exist_ok=True)
+    import face_recognition
+    for f in FACES_DIR.glob("*.jpg"):
+        img = face_recognition.load_image_file(str(f))
+        encs = face_recognition.face_encodings(img)
+        if encs:
+            known_faces[f.stem] = encs[0]
+            print(f"  Face loaded: {f.stem}")
+    for f in FACES_DIR.glob("*.png"):
+        img = face_recognition.load_image_file(str(f))
+        encs = face_recognition.face_encodings(img)
+        if encs:
+            known_faces[f.stem] = encs[0]
+            print(f"  Face loaded: {f.stem}")
+
+def flip_and_resize(jpeg_bytes):
+    """Flip 180 and resize if needed."""
+    img = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return jpeg_bytes
+    img = cv2.rotate(img, cv2.ROTATE_180)
+    h, w = img.shape[:2]
+    if w > 1920:
+        scale = 1920 / w
+        img = cv2.resize(img, (1920, int(h * scale)))
+    ok, out = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return out.tobytes() if ok else jpeg_bytes
+
+
+def process_frame_ai(jpeg_bytes):
+    """Run YOLO and/or face recognition on a frame, return annotated JPEG."""
+    img = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return jpeg_bytes
+    # Always flip 180 (cameras are mounted upside down)
+    img = cv2.rotate(img, cv2.ROTATE_180)
+    h, w = img.shape[:2]
+    if w > 1920:
+        scale = 1920 / w
+        img = cv2.resize(img, (1920, int(h * scale)))
+
+    if yolo_enabled and yolo_model:
+        results = yolo_model(img, verbose=False, conf=0.4)
+        for r in results:
+            for box in r.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                cls = int(box.cls[0])
+                conf = float(box.conf[0])
+                label = f"{yolo_model.names[cls]} {conf:.1%}"
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(img, label, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    if face_rec_enabled and known_faces:
+        import face_recognition
+        small = cv2.resize(img, (0, 0), fx=0.25, fy=0.25)
+        rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+        locs = face_recognition.face_locations(rgb_small)
+        encs = face_recognition.face_encodings(rgb_small, locs)
+        known_encs = list(known_faces.values())
+        known_names = list(known_faces.keys())
+        for (top, right, bottom, left), enc in zip(locs, encs):
+            top *= 4; right *= 4; bottom *= 4; left *= 4
+            matches = face_recognition.compare_faces(known_encs, enc, tolerance=0.5)
+            name = "Unknown"
+            if True in matches:
+                dists = face_recognition.face_distance(known_encs, enc)
+                best = np.argmin(dists)
+                if matches[best]:
+                    name = known_names[best]
+            color = (0, 200, 255) if name != "Unknown" else (0, 0, 255)
+            cv2.rectangle(img, (left, top), (right, bottom), color, 2)
+            cv2.putText(img, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+    ok, out = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return out.tobytes() if ok else jpeg_bytes
 
 # ── Config ──────────────────────────────────────────────────────
 ROBOT_HOST = "agi@10.104.218.77"
@@ -115,11 +213,11 @@ def ssh_cmd(cmd, timeout=30):
 # ── Camera ──────────────────────────────────────────────────────
 
 CAMERA_TOPICS = {
+    'head_front': '/aima/hal/sensor/rgb_head_front_center/rgb_image/compressed',
     'depth': '/camera/depth/image_raw/compressedDepth',
     'rgbd_front': '/aima/hal/sensor/rgbd_head_front/rgb_image/compressed',
     'stereo_left': '/aima/hal/sensor/stereo_head_front_left/rgb_image/compressed',
     'stereo_right': '/aima/hal/sensor/stereo_head_front_right/rgb_image/compressed',
-    'head_front': '/aima/hal/sensor/rgb_head_front_center/rgb_image/compressed',
     'head_rear': '/aima/hal/sensor/rgb_head_rear/rgb_image/compressed',
 }
 
@@ -508,6 +606,16 @@ def api_motion(action):
         f"'{{motion: {{value: {mid}}}, area: {{value: {aid}}}, interrupt: false}}'")})
 
 
+@app.route('/api/preset_motion', methods=['POST'])
+def api_preset_motion():
+    d = request.json
+    mid = d.get('motion_id', 1002)
+    aid = d.get('area_id', 1)
+    return jsonify({"result": ssh_cmd(
+        f"ros2 service call /aimdk_5Fmsgs/srv/SetMcPresetMotion aimdk_msgs/srv/SetMcPresetMotion "
+        f"'{{motion: {{value: {mid}}}, area: {{value: {aid}}}, interrupt: false}}'")})
+
+
 @app.route('/api/mode/<mode>')
 def api_mode(mode):
     modes = {'stand':'STAND_DEFAULT','locomotion':'LOCOMOTION_DEFAULT',
@@ -556,19 +664,29 @@ def api_camera_stop():
 
 @app.route('/api/camera/frame')
 def api_camera_frame():
+    frame = None
     # Try robot server first
     try:
         import urllib.request
         resp = urllib.request.urlopen(f"{ROBOT_SERVER}/camera/frame", timeout=2)
         if resp.status == 200:
-            return Response(resp.read(), mimetype='image/jpeg')
+            frame = resp.read()
     except Exception:
         pass
     # Fallback to local SSH stream
-    with frame_lock:
-        f = latest_frame
-    if f: return Response(f, mimetype='image/jpeg')
-    return Response(b'', status=204)
+    if not frame:
+        with frame_lock:
+            frame = latest_frame
+    if not frame:
+        return Response(b'', status=204)
+    # Apply AI processing if enabled, otherwise just flip
+    if yolo_enabled or face_rec_enabled:
+        frame = process_frame_ai(frame)
+    elif motion_detect_enabled:
+        frame = process_frame_motion(frame)
+    else:
+        frame = flip_and_resize(frame)
+    return Response(frame, mimetype='image/jpeg')
 
 @app.route('/api/camera/stream')
 def api_camera_stream():
@@ -586,6 +704,87 @@ def api_camera_stream():
         return Response(b'', status=503)
 
 # Walk
+# ── AI Vision routes ─────────────────────────────────────────────
+
+@app.route('/api/ai/yolo/toggle')
+def api_yolo_toggle():
+    global yolo_enabled
+    yolo_enabled = not yolo_enabled
+    if yolo_enabled:
+        load_yolo()
+    return jsonify({"enabled": yolo_enabled})
+
+@app.route('/api/ai/faces/toggle')
+def api_faces_toggle():
+    global face_rec_enabled
+    face_rec_enabled = not face_rec_enabled
+    if face_rec_enabled and not known_faces:
+        load_known_faces()
+    return jsonify({"enabled": face_rec_enabled, "known_count": len(known_faces)})
+
+@app.route('/api/ai/faces/add', methods=['POST'])
+def api_faces_add():
+    name = request.form.get('name', '')
+    if not name or 'photo' not in request.files:
+        return jsonify({"error": "need name and photo"}), 400
+    photo = request.files['photo']
+    FACES_DIR.mkdir(exist_ok=True)
+    path = FACES_DIR / f"{name}.jpg"
+    photo.save(str(path))
+    import face_recognition
+    img = face_recognition.load_image_file(str(path))
+    encs = face_recognition.face_encodings(img)
+    if encs:
+        known_faces[name] = encs[0]
+        return jsonify({"status": "added", "name": name, "total": len(known_faces)})
+    else:
+        path.unlink()
+        return jsonify({"error": "no face found in photo"}), 400
+
+@app.route('/api/ai/faces/list')
+def api_faces_list():
+    return jsonify({"faces": list(known_faces.keys())})
+
+@app.route('/api/ai/status')
+def api_ai_status():
+    return jsonify({
+        "yolo": yolo_enabled,
+        "yolo_loaded": yolo_model is not None,
+        "faces": face_rec_enabled,
+        "known_faces": list(known_faces.keys())
+    })
+
+# ── IMU routes ──────────────────────────────────────────────────
+
+@app.route('/api/imu/start')
+def api_imu_start():
+    try:
+        import urllib.request
+        urllib.request.urlopen(f"{ROBOT_SERVER}/imu/start", timeout=5)
+        return jsonify({"status": "started"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/imu/stop')
+def api_imu_stop():
+    try:
+        import urllib.request
+        urllib.request.urlopen(f"{ROBOT_SERVER}/imu/stop", timeout=5)
+    except Exception:
+        pass
+    return jsonify({"status": "stopped"})
+
+@app.route('/api/imu/data')
+def api_imu_data():
+    try:
+        import urllib.request
+        resp = urllib.request.urlopen(f"{ROBOT_SERVER}/imu/data", timeout=2)
+        return Response(resp.read(), mimetype='application/json')
+    except Exception:
+        return jsonify({})
+
+# ── Walk routes ──────────────────────────────────────────────────
+
 @app.route('/api/walk/start')
 def api_walk_start():
     start_walk(); return jsonify({"status": "starting"})
@@ -705,6 +904,170 @@ def api_webhook_robot():
         return jsonify({"error": f"Unknown action: {action}"}), 400
 
 
+# ── URDF API ─────────────────────────────────────────────────────
+
+URDF_DIR = Path(__file__).resolve().parent.parent / "X2_URDF-v1.3.0"
+
+def parse_urdf():
+    """Parse URDF file and return joint/link data for 3D visualization."""
+    import xml.etree.ElementTree as ET
+    urdf_path = URDF_DIR / "x2_ultra.urdf"
+    if not urdf_path.exists():
+        return {"error": "URDF not found"}
+    tree = ET.parse(str(urdf_path))
+    root = tree.getroot()
+
+    links = []
+    for link in root.findall('link'):
+        name = link.get('name')
+        visual = link.find('visual')
+        mesh = None
+        if visual is not None:
+            geo = visual.find('geometry')
+            if geo is not None:
+                m = geo.find('mesh')
+                if m is not None:
+                    mesh = m.get('filename', '').replace('./meshes/', '')
+        inertial = link.find('inertial')
+        mass = 0
+        if inertial is not None:
+            mass_el = inertial.find('mass')
+            if mass_el is not None:
+                mass = float(mass_el.get('value', 0))
+        # Extract RGBA color from material
+        color = None
+        if visual is not None:
+            mat = visual.find('material')
+            if mat is not None:
+                c = mat.find('color')
+                if c is not None:
+                    color = [round(float(x), 3) for x in c.get('rgba', '0.5 0.5 0.5 1').split()]
+        links.append({"name": name, "mesh": mesh, "mass": round(mass, 3), "color": color})
+
+    joints = []
+    for j in root.findall('joint'):
+        name = j.get('name')
+        jtype = j.get('type')
+        parent = j.find('parent').get('link')
+        child = j.find('child').get('link')
+        origin = j.find('origin')
+        xyz = [float(x) for x in (origin.get('xyz', '0 0 0') if origin is not None else '0 0 0').split()]
+        rpy = [float(x) for x in (origin.get('rpy', '0 0 0') if origin is not None else '0 0 0').split()]
+        axis_el = j.find('axis')
+        axis = [float(x) for x in (axis_el.get('xyz', '0 0 1') if axis_el is not None else '0 0 1').split()]
+        limit_el = j.find('limit')
+        lower = float(limit_el.get('lower', 0)) if limit_el is not None else 0
+        upper = float(limit_el.get('upper', 0)) if limit_el is not None else 0
+        joints.append({
+            "name": name, "type": jtype, "parent": parent, "child": child,
+            "xyz": xyz, "rpy": rpy, "axis": axis,
+            "lower": round(lower, 4), "upper": round(upper, 4)
+        })
+
+    return {"links": links, "joints": joints, "name": root.get('name', 'x2')}
+
+@app.route('/api/urdf')
+def api_urdf():
+    return jsonify(parse_urdf())
+
+@app.route('/api/urdf/mesh/<filename>')
+def api_urdf_mesh(filename):
+    """Serve STL mesh files from URDF directory."""
+    meshdir = URDF_DIR / "meshes"
+    if not (meshdir / filename).exists():
+        return Response(b'', status=404)
+    return send_from_directory(str(meshdir), filename)
+
+# ── Motion Detection (YOLO fallback) ────────────────────────────
+
+prev_frame_gray = None
+
+def process_frame_motion(jpeg_bytes):
+    """Simple motion detection as YOLO fallback — no extra deps needed."""
+    global prev_frame_gray
+    img = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return jpeg_bytes
+    img = cv2.rotate(img, cv2.ROTATE_180)
+    h, w = img.shape[:2]
+    if w > 1920:
+        scale = 1920 / w
+        img = cv2.resize(img, (1920, int(h * scale)))
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (21, 21), 0)
+
+    if prev_frame_gray is not None and prev_frame_gray.shape == gray.shape:
+        delta = cv2.absdiff(prev_frame_gray, gray)
+        thresh = cv2.threshold(delta, 25, 255, cv2.THRESH_BINARY)[1]
+        thresh = cv2.dilate(thresh, None, iterations=2)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in contours:
+            if cv2.contourArea(c) < 500:
+                continue
+            x, y, bw, bh = cv2.boundingRect(c)
+            cv2.rectangle(img, (x, y), (x + bw, y + bh), (0, 255, 255), 2)
+            cv2.putText(img, "motion", (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+
+    prev_frame_gray = gray
+    ok, out = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return out.tobytes() if ok else jpeg_bytes
+
+motion_detect_enabled = False
+
+@app.route('/api/ai/motion/toggle')
+def api_motion_detect_toggle():
+    global motion_detect_enabled
+    motion_detect_enabled = not motion_detect_enabled
+    return jsonify({"enabled": motion_detect_enabled})
+
+# ── System status ────────────────────────────────────────────────
+
+@app.route('/api/status')
+def api_system_status():
+    """Combined system status for the dashboard."""
+    ssh_ok = False
+    try:
+        r = subprocess.run(
+            ["ssh", "-o", f"ControlPath={SSH_SOCKET}", "-O", "check", ROBOT_HOST],
+            capture_output=True, timeout=3)
+        ssh_ok = r.returncode == 0
+    except Exception:
+        pass
+
+    robot_ok = False
+    try:
+        import urllib.request
+        resp = urllib.request.urlopen(f"{ROBOT_SERVER}/health", timeout=2)
+        robot_ok = resp.status == 200
+    except Exception:
+        pass
+
+    return jsonify({
+        "ssh": ssh_ok,
+        "robot_server": robot_ok,
+        "camera": camera_process is not None,
+        "walk": walk_process is not None,
+        "lidar": lidar_process is not None,
+        "yolo": yolo_enabled,
+        "yolo_loaded": yolo_model is not None,
+        "motion_detect": motion_detect_enabled,
+        "faces": face_rec_enabled,
+        "n8n_url": bool(N8N_WEBHOOK_URL),
+    })
+
+# ── SSH Terminal ─────────────────────────────────────────────────
+
+@app.route('/api/terminal', methods=['POST'])
+def api_terminal():
+    """Execute a command on the robot and return output. Supports history."""
+    cmd = request.json.get('cmd', '').strip()
+    if not cmd:
+        return jsonify({"output": ""})
+    result = ssh_cmd(cmd, timeout=15)
+    return jsonify({"output": result, "cmd": cmd})
+
+
 if __name__ == '__main__':
     os.makedirs(Path(__file__).parent / 'templates', exist_ok=True)
     os.makedirs(Path(__file__).parent / 'static', exist_ok=True)
@@ -716,6 +1079,12 @@ if __name__ == '__main__':
     print()
     print("  Establishing SSH master connection...")
     ensure_ssh_master()
+    print("  Loading known faces...")
+    try:
+        load_known_faces()
+    except Exception as e:
+        print(f"  Face loading skipped: {e}")
+    print(f"  Known faces: {list(known_faces.keys()) or 'none'}")
     print("  Ready!\n")
     try:
         app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)

@@ -1,0 +1,126 @@
+{
+  "name": "Agibot X2 - Greet Visitor",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Visitor Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "agibot-greet",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agibot-greet",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "2",
+      "name": "Set Happy Emoji",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/api/webhook/robot",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"action\": \"emoji\", \"params\": {\"id\": 90}}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "id": "3",
+      "name": "Wait 1s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [660, 200],
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "4",
+      "name": "Speak Greeting",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/api/webhook/robot",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({action: 'tts', params: {text: $json.body?.name ? 'Hello ' + $json.body.name + '! Welcome! I am Agibot X2 Ultra.' : 'Hello! Welcome! I am Agibot X2 Ultra, a humanoid robot.'}}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "id": "5",
+      "name": "Wait 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1100, 200],
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "6",
+      "name": "Wave Hand",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/api/webhook/robot",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"action\": \"motion\", \"params\": {\"type\": \"wave_right\"}}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "id": "7",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1540, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({status: 'ok', greeting: 'complete', robot: 'agibot_x2_ultra'}) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Visitor Webhook": {
+      "main": [[{"node": "Set Happy Emoji", "type": "main", "index": 0}]]
+    },
+    "Set Happy Emoji": {
+      "main": [[{"node": "Wait 1s", "type": "main", "index": 0}]]
+    },
+    "Wait 1s": {
+      "main": [[{"node": "Speak Greeting", "type": "main", "index": 0}]]
+    },
+    "Speak Greeting": {
+      "main": [[{"node": "Wait 2s", "type": "main", "index": 0}]]
+    },
+    "Wait 2s": {
+      "main": [[{"node": "Wave Hand", "type": "main", "index": 0}]]
+    },
+    "Wave Hand": {
+      "main": [[{"node": "Respond OK", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "active": false
+}

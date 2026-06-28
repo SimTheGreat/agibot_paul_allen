@@ -1,0 +1,128 @@
+{
+  "name": "Agibot X2 - Scheduled Demo Loop",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 300],
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "minutes", "minutesInterval": 5}]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "Stand Mode",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/api/webhook/robot",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"action\": \"mode\", \"params\": {\"mode\": \"stand\"}}",
+        "options": {"timeout": 10000}
+      }
+    },
+    {
+      "id": "3",
+      "name": "Wait 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [660, 300],
+      "parameters": {"amount": 2, "unit": "seconds"}
+    },
+    {
+      "id": "4",
+      "name": "Introduce",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/api/webhook/robot",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"action\": \"tts\", \"params\": {\"text\": \"Hi there! I am Agibot X2 Ultra, an open-source humanoid robot with 31 degrees of freedom. Come say hello!\"}}",
+        "options": {"timeout": 10000}
+      }
+    },
+    {
+      "id": "5",
+      "name": "Wait 4s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1100, 300],
+      "parameters": {"amount": 4, "unit": "seconds"}
+    },
+    {
+      "id": "6",
+      "name": "Pick Random Motion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300],
+      "parameters": {
+        "jsCode": "const motions = ['wave_left', 'wave_right', 'handshake_right', 'raise_left', 'raise_right', 'airkiss_right'];\nconst emojis = [90, 120, 200, 60];\nreturn [{\n  json: {\n    motion: motions[Math.floor(Math.random() * motions.length)],\n    emoji: emojis[Math.floor(Math.random() * emojis.length)]\n  }\n}];"
+      }
+    },
+    {
+      "id": "7",
+      "name": "Do Motion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 240],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/api/webhook/robot",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({action: 'motion', params: {type: $json.motion}}) }}",
+        "options": {"timeout": 10000}
+      }
+    },
+    {
+      "id": "8",
+      "name": "Do Emoji",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 400],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/api/webhook/robot",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({action: 'emoji', params: {id: $json.emoji}}) }}",
+        "options": {"timeout": 10000}
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [[{"node": "Stand Mode", "type": "main", "index": 0}]]
+    },
+    "Stand Mode": {
+      "main": [[{"node": "Wait 2s", "type": "main", "index": 0}]]
+    },
+    "Wait 2s": {
+      "main": [[{"node": "Introduce", "type": "main", "index": 0}]]
+    },
+    "Introduce": {
+      "main": [[{"node": "Wait 4s", "type": "main", "index": 0}]]
+    },
+    "Wait 4s": {
+      "main": [[{"node": "Pick Random Motion", "type": "main", "index": 0}]]
+    },
+    "Pick Random Motion": {
+      "main": [[
+        {"node": "Do Motion", "type": "main", "index": 0},
+        {"node": "Do Emoji", "type": "main", "index": 0}
+      ]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "active": false
+}

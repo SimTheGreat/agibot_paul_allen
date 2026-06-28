@@ -3,121 +3,234 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Agibot X2 Dashboard</title>
+<title>Agibot X2 Ultra</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// STLLoader for Three.js r128 — inline to avoid extra CDN
+THREE.STLLoader=function(manager){this.manager=manager!==undefined?manager:THREE.DefaultLoadingManager};
+THREE.STLLoader.prototype={constructor:THREE.STLLoader,load:function(url,onLoad,onProgress,onError){
+var scope=this;var loader=new THREE.FileLoader(scope.manager);loader.setPath(scope.path);
+loader.setResponseType('arraybuffer');loader.load(url,function(text){
+try{onLoad(scope.parse(text))}catch(e){if(onError)onError(e);else console.error(e);scope.manager.itemError(url)}
+},onProgress,onError)},setPath:function(value){this.path=value;return this},
+parse:function(data){var binData=this.ensureBinary(data);return this.parseBinary(binData)},
+parseBinary:function(data){var reader=new DataView(data);var faces=reader.getUint32(80,true);
+var r,g,b,hasColors=false,colors;var defaultR,defaultG,defaultB,alpha;
+for(var index=0;index<80-10;index++){
+if(reader.getUint32(index,false)==0x434F4C4F&&reader.getUint8(index+4)==0x52&&reader.getUint8(index+5)==0x3D){
+hasColors=true;colors=new Float32Array(faces*3*3);
+defaultR=reader.getUint8(index+6)/255;defaultG=reader.getUint8(index+7)/255;
+defaultB=reader.getUint8(index+8)/255;alpha=reader.getUint8(index+9)/255;break}}
+var dataOffset=84;var faceLength=12*4+2;
+var geometry=new THREE.BufferGeometry();
+var vertices=new Float32Array(faces*3*3);var normals=new Float32Array(faces*3*3);
+for(var face=0;face<faces;face++){
+var start=dataOffset+face*faceLength;
+var normalX=reader.getFloat32(start,true);var normalY=reader.getFloat32(start+4,true);
+var normalZ=reader.getFloat32(start+8,true);
+if(hasColors){var packedColor=reader.getUint16(start+48,true);
+if((packedColor&0x8000)===0){r=(packedColor&0x1F)/31;g=((packedColor>>5)&0x1F)/31;
+b=((packedColor>>10)&0x1F)/31}else{r=defaultR;g=defaultG;b=defaultB}}
+for(var i=0;i<3;i++){var vertexstart=start+12+i*12;
+vertices[face*9+i*3]=reader.getFloat32(vertexstart,true);
+vertices[face*9+i*3+1]=reader.getFloat32(vertexstart+4,true);
+vertices[face*9+i*3+2]=reader.getFloat32(vertexstart+8,true);
+normals[face*9+i*3]=normalX;normals[face*9+i*3+1]=normalY;normals[face*9+i*3+2]=normalZ;
+if(hasColors)colors[face*9+i*3]=r,colors[face*9+i*3+1]=g,colors[face*9+i*3+2]=b}}
+geometry.setAttribute('position',new THREE.BufferAttribute(vertices,3));
+geometry.setAttribute('normal',new THREE.BufferAttribute(normals,3));
+if(hasColors)geometry.setAttribute('color',new THREE.BufferAttribute(colors,3));
+return geometry},
+ensureBinary:function(buf){if(typeof buf==='string'){var arr=new Uint8Array(buf.length);
+for(var i=0;i<buf.length;i++)arr[i]=buf.charCodeAt(i)&0xff;return arr.buffer}return buf}};
+</script>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-:root {
-  --bg: #0a0a1a; --panel: #12122a; --border: #2a2a5a;
-  --text: #e0e0e0; --muted: #888; --accent: #00d4ff; --purple: #7b2ff7;
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#050510;--surface:rgba(15,15,35,0.7);--surface-solid:#0f0f23;
+  --border:rgba(255,255,255,0.06);--border-hover:rgba(255,255,255,0.12);
+  --text:#e8e8f0;--text-muted:rgba(255,255,255,0.4);--text-dim:rgba(255,255,255,0.25);
+  --accent:#6366f1;--accent-glow:rgba(99,102,241,0.15);
+  --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--cyan:#06b6d4;
+  --radius:10px;--radius-lg:16px;
 }
-body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+html{font-size:14px}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);overflow-x:hidden;min-height:100vh}
+body::before{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background:radial-gradient(ellipse at 20% 0%,rgba(99,102,241,0.08) 0%,transparent 50%),radial-gradient(ellipse at 80% 100%,rgba(6,182,212,0.05) 0%,transparent 50%);pointer-events:none;z-index:0}
 
-/* Tabs */
-.header { background: linear-gradient(135deg, #1a1a3e, #0d0d2b); padding: 12px 20px; border-bottom: 2px solid var(--border); display: flex; align-items: center; gap: 15px; }
-.header h1 { font-size: 22px; background: linear-gradient(90deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.tabs { display: flex; gap: 4px; margin-left: 30px; }
-.tab { padding: 8px 18px; border-radius: 6px 6px 0 0; background: transparent; border: 1px solid transparent; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
-.tab:hover { color: var(--text); background: rgba(255,255,255,0.05); }
-.tab.active { background: var(--panel); border-color: var(--border); border-bottom-color: var(--panel); color: var(--accent); }
-.status-dot { margin-left: auto; width: 10px; height: 10px; border-radius: 50%; background: #4eff4e; box-shadow: 0 0 6px #4eff4e; }
+/* Header */
+.header{position:sticky;top:0;z-index:100;background:rgba(5,5,16,0.85);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;gap:16px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;letter-spacing:-0.5px;color:var(--text);white-space:nowrap}
+.logo-mark{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--cyan));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff}
+.nav{display:flex;gap:2px;margin-left:24px}
+.nav-btn{padding:8px 16px;border-radius:8px;background:none;border:none;color:var(--text-muted);font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:all 0.2s;white-space:nowrap}
+.nav-btn:hover{color:var(--text);background:rgba(255,255,255,0.04)}
+.nav-btn.active{color:var(--text);background:rgba(99,102,241,0.12)}
+.status-bar{margin-left:auto;display:flex;align-items:center;gap:12px}
+.status-pill{display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:500;background:rgba(255,255,255,0.03);border:1px solid var(--border)}
+.status-dot{width:6px;height:6px;border-radius:50%}
+.dot-green{background:var(--green);box-shadow:0 0 6px var(--green)}
+.dot-red{background:var(--red);box-shadow:0 0 6px var(--red)}
+.dot-amber{background:var(--amber);box-shadow:0 0 6px var(--amber)}
 
-.tab-content { display: none; padding: 20px; max-width: 1500px; margin: 0 auto; }
-.tab-content.active { display: block; }
+/* Layout */
+.page{display:none;padding:20px 24px;position:relative;z-index:1;max-width:1440px;margin:0 auto}
+.page.active{display:block}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:1fr 1fr 1fr}
+.g23{grid-template-columns:2fr 1fr}
+.g32{grid-template-columns:1fr 2fr}
+.span2{grid-column:span 2}
+.span3{grid-column:1/-1}
 
-/* Panels */
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
-.panel h2 { font-size: 14px; color: #8888cc; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px; }
-.full { grid-column: 1 / -1; }
+/* Card */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;transition:border-color 0.2s}
+.card:hover{border-color:var(--border-hover)}
+.card-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.card-title .indicator{width:4px;height:4px;border-radius:50%;background:var(--accent)}
 
 /* Buttons */
-.btn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
-.btn { padding: 10px 8px; border: 1px solid #3a3a6a; border-radius: 8px; background: #1a1a3e; color: #c0c0ff; font-size: 12px; cursor: pointer; transition: all 0.15s; text-align: center; font-weight: 500; user-select: none; }
-.btn:hover { background: #2a2a5e; border-color: #5a5aaa; transform: translateY(-1px); }
-.btn:active { transform: translateY(1px); }
-.btn.success { border-color: #3a6a3a; color: #88ff88; }
-.btn.danger { border-color: #6a3a3a; color: #ff8888; }
-.btn.warning { border-color: #6a6a3a; color: #ffff88; }
-.btn.primary { border-color: #3a5a8a; color: #88bbff; }
-.btn.sm { padding: 6px; font-size: 11px; }
-.emoji-grid { grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); }
+.btn-row{display:flex;gap:6px;flex-wrap:wrap}
+.btn{padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-muted);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;user-select:none;white-space:nowrap}
+.btn:hover{background:rgba(255,255,255,0.06);color:var(--text);border-color:var(--border-hover);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn-sm{padding:5px 10px;font-size:11px}
+.btn-primary{background:rgba(99,102,241,0.12);border-color:rgba(99,102,241,0.25);color:#a5b4fc}
+.btn-primary:hover{background:rgba(99,102,241,0.2);border-color:rgba(99,102,241,0.4)}
+.btn-success{background:rgba(34,197,94,0.1);border-color:rgba(34,197,94,0.2);color:#86efac}
+.btn-success:hover{background:rgba(34,197,94,0.18)}
+.btn-danger{background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.2);color:#fca5a5}
+.btn-danger:hover{background:rgba(239,68,68,0.18)}
+.btn-amber{background:rgba(245,158,11,0.1);border-color:rgba(245,158,11,0.2);color:#fcd34d}
+.btn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px}
 
 /* Inputs */
-.input { padding: 8px 12px; border: 1px solid #3a3a6a; border-radius: 8px; background: #1a1a3e; color: var(--text); font-size: 13px; outline: none; width: 100%; }
-.input:focus { border-color: #5a5aaa; }
-select.input { cursor: pointer; }
-.row { display: flex; gap: 8px; align-items: center; }
+.input{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text);font-family:inherit;font-size:13px;outline:none;width:100%;transition:border-color 0.2s}
+.input:focus{border-color:rgba(99,102,241,0.4)}
+.input::placeholder{color:var(--text-dim)}
+select.input{cursor:pointer;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='rgba(255,255,255,0.3)' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px}
+textarea.input{resize:vertical;font-family:'JetBrains Mono',monospace;font-size:12px}
 
 /* Camera */
-.cam-box { background: #000; border-radius: 8px; min-height: 280px; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
-.cam-box img { max-width: 100%; max-height: 350px; }
-.cam-placeholder { color: #444; font-size: 13px; }
+.cam-container{background:#000;border-radius:var(--radius);aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+.cam-container img{width:100%;height:100%;object-fit:contain}
+.cam-placeholder{color:var(--text-dim);font-size:12px;font-weight:500}
+.cam-overlay{position:absolute;top:8px;right:8px;display:flex;gap:4px}
+.cam-badge{padding:3px 8px;border-radius:4px;font-size:10px;font-weight:600;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px)}
+.cam-badge.live{color:var(--red);border:1px solid rgba(239,68,68,0.3)}
 
 /* 3D Viewer */
-.viewer3d { width: 100%; height: 400px; border-radius: 8px; overflow: hidden; background: #080818; }
+.viewer3d{width:100%;height:450px;border-radius:var(--radius);overflow:hidden;background:#060612;position:relative}
 
-/* Walk */
-.walk-grid { display: grid; grid-template-areas: ". up ." "left stop right" ". down ."; grid-template-columns: 60px 60px 60px; gap: 6px; justify-content: center; }
-.walk-grid .btn { padding: 16px; font-size: 15px; }
+/* Walk pad */
+.walk-pad{display:grid;grid-template-areas:". up ." "left stop right" ". down .";grid-template-columns:52px 52px 52px;gap:4px;justify-content:center}
+.walk-pad .btn{padding:14px;font-size:14px;font-weight:600;text-align:center}
+
+/* Terminal */
+.terminal{background:#0a0a14;border:1px solid var(--border);border-radius:var(--radius);font-family:'JetBrains Mono',monospace;font-size:12px;overflow:hidden}
+.terminal-output{padding:12px;max-height:220px;overflow-y:auto;color:var(--text-muted);white-space:pre-wrap;word-break:break-all;line-height:1.6}
+.terminal-output .cmd{color:var(--cyan)}
+.terminal-output .out{color:var(--text-muted)}
+.terminal-input{display:flex;border-top:1px solid var(--border);align-items:center;padding:0 12px}
+.terminal-input span{color:var(--green);font-size:12px;margin-right:8px;white-space:nowrap}
+.terminal-input input{flex:1;background:none;border:none;color:var(--text);font-family:inherit;font-size:12px;padding:10px 0;outline:none}
 
 /* Log */
-.log { background: #080818; border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; font-family: 'Fira Code', monospace; font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
+.log{background:#0a0a14;border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;max-height:160px;overflow-y:auto;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-dim);white-space:pre-wrap;word-break:break-all;line-height:1.5}
+.log .ts{color:var(--text-dim)}
+.log .msg{color:var(--text-muted)}
 
 /* Workflow */
-.wf-list { max-height: 300px; overflow-y: auto; }
-.wf-item { padding: 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
-.wf-item .name { flex: 1; font-weight: 500; }
-.wf-step { padding: 8px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; background: #0a0a1a; font-size: 12px; display: flex; gap: 8px; align-items: center; }
-.wf-step select, .wf-step input { font-size: 11px; padding: 4px 6px; }
+.wf-item{padding:12px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;display:flex;align-items:center;gap:10px;transition:border-color 0.2s}
+.wf-item:hover{border-color:var(--border-hover)}
+.wf-item .name{flex:1;font-weight:500;font-size:13px}
+.wf-step{padding:8px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;background:rgba(255,255,255,0.02);display:flex;gap:8px;align-items:center}
 
-/* n8n */
-.n8n-status { padding: 6px 12px; border-radius: 6px; font-size: 12px; }
-.n8n-connected { background: #0a3d0a; color: #4eff4e; }
-.n8n-disconnected { background: #3d0a0a; color: #ff4e4e; }
+/* Joint slider */
+.joint-slider{margin-bottom:8px}
+.joint-slider label{display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:4px;font-family:'JetBrains Mono',monospace}
+.joint-slider input[type=range]{width:100%;height:4px;-webkit-appearance:none;appearance:none;background:rgba(255,255,255,0.08);border-radius:2px;outline:none}
+.joint-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg)}
 
-@media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+/* Scrollbar */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px}
+
+/* n8n status */
+.n8n-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:500}
+.n8n-on{background:rgba(34,197,94,0.1);color:#86efac;border:1px solid rgba(34,197,94,0.2)}
+.n8n-off{background:rgba(239,68,68,0.08);color:#fca5a5;border:1px solid rgba(239,68,68,0.15)}
+
+/* Joint groups collapsible */
+.joint-group-hdr{display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:6px 0;user-select:none}
+.joint-group-hdr:hover{color:var(--text)}
+.joint-group-hdr .arrow{transition:transform 0.2s;font-size:10px;color:var(--text-dim)}
+.joint-group-hdr .arrow.collapsed{transform:rotate(-90deg)}
+.joint-group-body{overflow:hidden;transition:max-height 0.25s ease}
+.joint-group-body.collapsed{max-height:0!important}
+
+/* Responsive */
+@media(max-width:1024px){.g2,.g3,.g23,.g32{grid-template-columns:1fr}.span2{grid-column:span 1}}
+@media(max-width:768px){.nav{overflow-x:auto;scrollbar-width:none}.header{padding:0 12px}.page{padding:12px}}
 </style>
 </head>
 <body>
 
 <div class="header">
-  <h1>AGIBOT X2</h1>
-  <div class="tabs">
-    <div class="tab active" onclick="switchTab('control')">Controls</div>
-    <div class="tab" onclick="switchTab('sim')">3D Sim</div>
-    <div class="tab" onclick="switchTab('lidar')">LiDAR Map</div>
-    <div class="tab" onclick="switchTab('workflow')">Workflows</div>
-    <div class="tab" onclick="switchTab('n8n')">n8n</div>
+  <div class="logo">
+    <div class="logo-mark">X2</div>
+    <span>Agibot X2 Ultra</span>
   </div>
-  <div class="status-dot" id="statusDot" title="Robot connection"></div>
+  <nav class="nav">
+    <button class="nav-btn active" onclick="go('ctrl')">Controls</button>
+    <button class="nav-btn" onclick="go('sim')">URDF Sim</button>
+    <button class="nav-btn" onclick="go('lidar')">LiDAR</button>
+    <button class="nav-btn" onclick="go('wf')">Workflows</button>
+    <button class="nav-btn" onclick="go('imu')">IMU</button>
+    <button class="nav-btn" onclick="go('n8n')">n8n</button>
+    <button class="nav-btn" onclick="go('term')">Terminal</button>
+  </nav>
+  <div class="status-bar">
+    <div class="status-pill"><div class="status-dot" id="sshDot"></div><span id="sshLabel">SSH</span></div>
+    <div class="status-pill"><div class="status-dot" id="botDot"></div><span id="botLabel">Robot</span></div>
+  </div>
 </div>
 
-<!-- ═══ TAB: Controls ═══ -->
-<div class="tab-content active" id="tab-control">
-  <div class="grid2">
-    <!-- Camera -->
-    <div class="panel">
-      <h2>Camera Feed</h2>
-      <div class="cam-box"><span class="cam-placeholder" id="camPH">Click START</span><img id="camImg" style="display:none"/></div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn success" onclick="camStart()">START</button>
-        <button class="btn danger" onclick="camStop()">STOP</button>
+<!-- ======= CONTROLS ======= -->
+<div class="page active" id="p-ctrl">
+  <div class="grid g2">
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>Camera Feed</div>
+      <div class="cam-container" id="camBox">
+        <span class="cam-placeholder" id="camPH">Select a camera and press Start</span>
+        <img id="camImg" style="display:none"/>
+        <div class="cam-overlay"><span class="cam-badge live" id="camLive" style="display:none">LIVE</span></div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:12px;align-items:center">
+        <button class="btn btn-success" onclick="camStart()">Start</button>
+        <button class="btn btn-danger" onclick="camStop()">Stop</button>
         <select class="input" id="camSel" style="flex:1">
+          <option value="head_front">Head Front Center</option>
           <option value="depth">Depth Camera</option>
           <option value="rgbd_front">RGBD Front</option>
           <option value="stereo_left">Stereo Left</option>
           <option value="stereo_right">Stereo Right</option>
-          <option value="head_front">Head Front</option>
           <option value="head_rear">Head Rear</option>
         </select>
       </div>
+      <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+        <button class="btn btn-sm" id="yoloBtn" onclick="toggleYolo()">YOLO: OFF</button>
+        <button class="btn btn-sm" id="motionBtn" onclick="toggleMotion()">Motion: OFF</button>
+        <button class="btn btn-sm" id="faceBtn" onclick="toggleFaces()">Faces: OFF</button>
+      </div>
     </div>
 
-    <!-- Motions + Mode -->
-    <div class="panel">
-      <h2>Arm Motions</h2>
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>Arm Motions</div>
       <div class="btn-grid">
         <button class="btn" onclick="motion('wave_left')">Wave L</button>
         <button class="btn" onclick="motion('wave_right')">Wave R</button>
@@ -127,150 +240,210 @@ select.input { cursor: pointer; }
         <button class="btn" onclick="motion('raise_right')">Raise R</button>
         <button class="btn" onclick="motion('airkiss_left')">Kiss L</button>
         <button class="btn" onclick="motion('airkiss_right')">Kiss R</button>
+        <button class="btn" onclick="presetMotion(3017,11)">Clap</button>
+        <button class="btn" onclick="presetMotion(1013,2)">Salute R</button>
+        <button class="btn" onclick="presetMotion(1007,3)">Heart</button>
+        <button class="btn" onclick="presetMotion(3008,11)">Hug</button>
+        <button class="btn" onclick="presetMotion(3011,11)">Cheer</button>
+        <button class="btn" onclick="presetMotion(1010,3)">Both Up</button>
+        <button class="btn" onclick="presetMotion(3031,11)">Goodbye</button>
+        <button class="btn" onclick="presetMotion(1008,2)">Hi-5 R</button>
+        <button class="btn" onclick="presetMotion(3009,11)">Cross Arms</button>
+        <button class="btn" onclick="presetMotion(3001,11)">Bow</button>
+        <button class="btn" onclick="presetMotion(3024,11)">Scratch</button>
+        <button class="btn" onclick="presetMotion(3007,11)">Light Wave</button>
       </div>
-      <h2 style="margin-top:16px">Robot Mode</h2>
+      <div class="card-title" style="margin-top:18px"><span class="indicator"></span>Robot Mode</div>
       <div class="btn-grid">
-        <button class="btn success" onclick="setMode('stand')">Stand</button>
-        <button class="btn primary" onclick="setMode('locomotion')">Locomotion</button>
+        <button class="btn btn-success" onclick="setMode('stand')">Stand</button>
+        <button class="btn btn-primary" onclick="setMode('locomotion')">Locomotion</button>
         <button class="btn" onclick="setMode('joint')">Joint Lock</button>
-        <button class="btn" onclick="setMode('damping')">Damping</button>
-        <button class="btn danger" onclick="setMode('passive')">Passive</button>
+        <button class="btn btn-amber" onclick="setMode('damping')">Damping</button>
+        <button class="btn btn-danger" onclick="setMode('passive')">Passive</button>
       </div>
     </div>
 
-    <!-- Emoji -->
-    <div class="panel">
-      <h2>Face Emoji</h2>
-      <div class="btn-grid emoji-grid">
-        <button class="btn sm" onclick="emoji(1)">Blink</button>
-        <button class="btn sm" onclick="emoji(60)">Bored</button>
-        <button class="btn sm" onclick="emoji(70)">Abnormal</button>
-        <button class="btn sm" onclick="emoji(80)">Sleep</button>
-        <button class="btn sm" onclick="emoji(90)">Happy</button>
-        <button class="btn sm" onclick="emoji(100)">Sad</button>
-        <button class="btn sm" onclick="emoji(120)">Surprised</button>
-        <button class="btn sm" onclick="emoji(150)">Angry</button>
-        <button class="btn sm" onclick="emoji(190)">Furious</button>
-        <button class="btn sm" onclick="emoji(200)">Adore</button>
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>Face Emoji</div>
+      <div class="btn-grid" style="grid-template-columns:repeat(auto-fill,minmax(80px,1fr))">
+        <button class="btn btn-sm" onclick="emoji(1)">Blink</button>
+        <button class="btn btn-sm" onclick="emoji(60)">Bored</button>
+        <button class="btn btn-sm" onclick="emoji(70)">Abnormal</button>
+        <button class="btn btn-sm" onclick="emoji(80)">Sleep</button>
+        <button class="btn btn-sm" onclick="emoji(90)">Happy</button>
+        <button class="btn btn-sm" onclick="emoji(100)">Sad</button>
+        <button class="btn btn-sm" onclick="emoji(120)">Surprised</button>
+        <button class="btn btn-sm" onclick="emoji(150)">Angry</button>
+        <button class="btn btn-sm" onclick="emoji(190)">Furious</button>
+        <button class="btn btn-sm" onclick="emoji(200)">Adore</button>
       </div>
-      <h2 style="margin-top:16px">Text to Speech</h2>
-      <div class="row">
-        <input class="input" id="ttsInput" placeholder="Text to speak..." value="Hello I am Agibot X2"/>
-        <button class="btn success" onclick="speak()">Speak</button>
+      <div class="card-title" style="margin-top:18px"><span class="indicator"></span>Text to Speech</div>
+      <div style="display:flex;gap:6px">
+        <input class="input" id="ttsInput" placeholder="What should the robot say?" value="Hello I am Agibot X2"/>
+        <button class="btn btn-primary" onclick="speak()">Speak</button>
       </div>
     </div>
 
-    <!-- Walk -->
-    <div class="panel">
-      <h2>Walk Control</h2>
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>Walk Control</div>
       <div style="display:flex;gap:20px;align-items:flex-start">
-        <div class="walk-grid">
+        <div class="walk-pad">
           <button class="btn" style="grid-area:up" onmousedown="wk('f',0.3)">W</button>
           <button class="btn" style="grid-area:left" onmousedown="wk('a',0.2)">A</button>
-          <button class="btn danger" style="grid-area:stop" onclick="wkStop()">X</button>
+          <button class="btn btn-danger" style="grid-area:stop" onclick="wkStop()">X</button>
           <button class="btn" style="grid-area:right" onmousedown="wk('a',-0.2)">D</button>
           <button class="btn" style="grid-area:down" onmousedown="wk('f',-0.3)">S</button>
         </div>
-        <div style="flex:1;font-size:12px">
-          <div style="font-family:monospace;color:var(--accent);margin-bottom:8px">
-            Fwd: <span id="wF">0.0</span> | Turn: <span id="wA">0.0</span>
+        <div style="flex:1">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan);margin-bottom:10px">
+            Fwd: <span id="wF">0.0</span> &nbsp; Turn: <span id="wA">0.0</span>
           </div>
-          <button class="btn success sm" onclick="walkInit()">Enable Walk</button>
-          <button class="btn danger sm" onclick="walkEnd()">Disable</button>
-          <p style="color:#555;font-size:10px;margin-top:6px">Set Locomotion mode first</p>
+          <div class="btn-row">
+            <button class="btn btn-success btn-sm" onclick="walkInit()">Enable Walk</button>
+            <button class="btn btn-danger btn-sm" onclick="walkEnd()">Disable</button>
+          </div>
+          <p style="color:var(--text-dim);font-size:10px;margin-top:8px">Set Locomotion mode first. WASD or arrow keys to move.</p>
         </div>
       </div>
     </div>
 
-    <!-- Log -->
-    <div class="panel full">
-      <h2>Log</h2>
-      <div class="log" id="logBox">Ready.\n</div>
+    <div class="card span2">
+      <div class="card-title"><span class="indicator"></span>Activity Log</div>
+      <div class="log" id="logBox">System ready.\n</div>
     </div>
   </div>
 </div>
 
-<!-- ═══ TAB: 3D Simulator ═══ -->
-<div class="tab-content" id="tab-sim">
-  <div class="grid2">
-    <div class="panel" style="grid-column:1/-1">
-      <h2>3D Robot Simulator</h2>
-      <div class="viewer3d" id="simViewer"></div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn primary" onclick="simReset()">Reset View</button>
-        <button class="btn" onclick="simAnimate('wave')">Sim Wave</button>
-        <button class="btn" onclick="simAnimate('walk')">Sim Walk</button>
-        <button class="btn" onclick="simAnimate('idle')">Idle</button>
-        <span style="color:var(--muted);font-size:12px;margin-left:10px">Click + drag to rotate, scroll to zoom</span>
+<!-- ======= URDF SIMULATOR ======= -->
+<div class="page" id="p-sim">
+  <div class="grid g32">
+    <div class="card" style="display:flex;flex-direction:column;max-height:calc(100vh - 100px)">
+      <div class="card-title"><span class="indicator"></span>Preset Poses</div>
+      <div class="btn-row" style="margin-bottom:10px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-primary" onclick="playPose('stand')">Stand</button>
+        <button class="btn btn-sm btn-primary" onclick="playPose('crouch')">Crouch</button>
+        <button class="btn btn-sm btn-primary" onclick="playPose('sit')">Sit</button>
+        <button class="btn btn-sm btn-primary" onclick="playPose('tpose')">T-Pose</button>
+        <button class="btn btn-sm btn-primary" onclick="playPose('bow')">Bow</button>
+        <button class="btn btn-sm btn-primary" onclick="playPose('handsUp')">Hands Up</button>
+      </div>
+      <div class="card-title"><span class="indicator"></span>Animations</div>
+      <div class="btn-row" style="margin-bottom:10px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-success" onclick="simAnimate('wave')">Wave</button>
+        <button class="btn btn-sm btn-success" onclick="simAnimate('walk')">Walk</button>
+        <button class="btn btn-sm btn-success" onclick="simAnimate('dance')">Dance</button>
+        <button class="btn btn-sm btn-success" onclick="simAnimate('look')">Look Around</button>
+        <button class="btn btn-sm" onclick="simAnimate('idle');resetJoints()">Stop</button>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div class="card-title" style="margin:0"><span class="indicator"></span>Joint Controls</div>
+        <button class="btn btn-sm" onclick="toggleAllJoints()" id="jToggleBtn" style="font-size:10px">Collapse All</button>
+      </div>
+      <div id="jointControls" style="flex:1;overflow-y:auto;padding-right:8px;min-height:0">
+        <p style="color:var(--text-dim);font-size:12px">Loading URDF...</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>3D URDF Visualizer &mdash; Agibot X2 Ultra</div>
+      <div class="viewer3d" id="simViewer" style="height:520px"></div>
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+        <button class="btn btn-sm" onclick="simReset()">Reset View</button>
+        <span style="color:var(--text-dim);font-size:11px">Drag to orbit, scroll to zoom</span>
+        <span style="margin-left:auto;color:var(--text-dim);font-size:11px" id="jointCountLabel"></span>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ═══ TAB: LiDAR Map ═══ -->
-<div class="tab-content" id="tab-lidar">
-  <div class="panel">
-    <h2>LiDAR Point Cloud Map</h2>
-    <div class="viewer3d" id="lidarViewer"></div>
-    <div class="row" style="margin-top:10px">
-      <button class="btn success" onclick="lidarStart()">Start LiDAR</button>
-      <button class="btn danger" onclick="lidarStop()">Stop</button>
+<!-- ======= LIDAR ======= -->
+<div class="page" id="p-lidar">
+  <div class="card">
+    <div class="card-title"><span class="indicator"></span>LiDAR Point Cloud Map</div>
+    <div class="viewer3d" id="lidarViewer" style="height:500px"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+      <button class="btn btn-success" onclick="lidarStart()">Start LiDAR</button>
+      <button class="btn btn-danger" onclick="lidarStop()">Stop</button>
       <button class="btn" onclick="lidarClear()">Clear Map</button>
-      <span style="color:var(--muted);font-size:12px;margin-left:10px">Points: <span id="lidarCount">0</span></span>
+      <span style="margin-left:auto;color:var(--text-muted);font-family:'JetBrains Mono',monospace;font-size:11px">Points: <span id="lidarCount">0</span></span>
     </div>
   </div>
 </div>
 
-<!-- ═══ TAB: Workflows ═══ -->
-<div class="tab-content" id="tab-workflow">
-  <div class="grid2">
-    <div class="panel">
-      <h2>Saved Workflows</h2>
-      <div class="wf-list" id="wfList"><p style="color:#555">No workflows yet. Create one!</p></div>
-      <button class="btn primary" style="margin-top:10px;width:100%" onclick="wfNew()">+ New Workflow</button>
+<!-- ======= WORKFLOWS ======= -->
+<div class="page" id="p-wf">
+  <div class="grid g2">
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>Saved Workflows</div>
+      <div id="wfList" style="max-height:400px;overflow-y:auto"><p style="color:var(--text-dim);font-size:12px">No workflows yet. Create one.</p></div>
+      <button class="btn btn-primary" style="margin-top:12px;width:100%" onclick="wfNew()">+ New Workflow</button>
     </div>
-    <div class="panel">
-      <h2>Workflow Editor</h2>
-      <div class="row" style="margin-bottom:10px">
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>Workflow Editor</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
         <input class="input" id="wfName" placeholder="Workflow name..." style="flex:1"/>
-        <button class="btn success" onclick="wfSave()">Save</button>
-        <button class="btn primary" onclick="wfRun()">Run</button>
+        <button class="btn btn-success" onclick="wfSave()">Save</button>
+        <button class="btn btn-primary" onclick="wfRun()">Run</button>
       </div>
       <div id="wfSteps"></div>
-      <button class="btn sm" style="width:100%;margin-top:8px" onclick="wfAddStep()">+ Add Step</button>
+      <button class="btn btn-sm" style="width:100%;margin-top:8px" onclick="wfAddStep()">+ Add Step</button>
     </div>
   </div>
 </div>
 
-<!-- ═══ TAB: n8n ═══ -->
-<div class="tab-content" id="tab-n8n">
-  <div class="grid2">
-    <div class="panel">
-      <h2>n8n Webhook Connector</h2>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        Connect your Agibot to n8n workflows via webhooks.
-      </p>
-      <label style="font-size:12px;color:#8888cc">n8n Webhook URL</label>
-      <div class="row" style="margin-top:4px">
-        <input class="input" id="n8nUrl" placeholder="https://your-n8n.com/webhook/..."/>
-        <button class="btn success" onclick="n8nSave()">Save</button>
-      </div>
-      <div style="margin-top:16px">
-        <label style="font-size:12px;color:#8888cc">Test Payload (JSON)</label>
-        <textarea class="input" id="n8nPayload" rows="4" style="margin-top:4px;font-family:monospace;font-size:11px">{"event": "test", "robot": "agibot_x2"}</textarea>
-        <button class="btn primary" style="margin-top:8px" onclick="n8nTest()">Send Test Webhook</button>
+<!-- ======= IMU ======= -->
+<div class="page" id="p-imu">
+  <div class="grid g2">
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>IMU 3D Orientation</div>
+      <div class="viewer3d" id="imuViewer"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-success" onclick="imuStart()">Start IMU</button>
+        <button class="btn btn-danger" onclick="imuStop()">Stop</button>
       </div>
     </div>
-    <div class="panel">
-      <h2>Incoming Webhook (Robot API)</h2>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        n8n can control the robot by POSTing to this endpoint:
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>IMU Data</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;line-height:2.2">
+        <div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px">Orientation (quaternion)</div>
+        <div style="color:var(--accent)">x:<span id="imuOx">-</span> y:<span id="imuOy">-</span> z:<span id="imuOz">-</span> w:<span id="imuOw">-</span></div>
+        <div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-top:12px">Angular Velocity (rad/s)</div>
+        <div style="color:var(--green)">x:<span id="imuAx">-</span> y:<span id="imuAy">-</span> z:<span id="imuAz">-</span></div>
+        <div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-top:12px">Linear Acceleration (m/s&sup2;)</div>
+        <div style="color:var(--red)">x:<span id="imuLx">-</span> y:<span id="imuLy">-</span> z:<span id="imuLz">-</span></div>
+      </div>
+      <div class="card-title" style="margin-top:20px"><span class="indicator"></span>Acceleration Graph</div>
+      <canvas id="imuGraph" width="500" height="140" style="width:100%;border-radius:var(--radius);background:#0a0a14;border:1px solid var(--border)"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- ======= N8N ======= -->
+<div class="page" id="p-n8n">
+  <div class="grid g2">
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>n8n Webhook Connector</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px">
+        Connect your Agibot X2 to n8n automation workflows via webhooks. Trigger robot actions from any n8n workflow.
       </p>
-      <div class="input" style="background:#080818;font-family:monospace;font-size:12px;color:var(--accent)">
+      <label style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px">Outgoing Webhook URL</label>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <input class="input" id="n8nUrl" placeholder="https://your-n8n.com/webhook/..."/>
+        <button class="btn btn-success" onclick="n8nSave()">Save</button>
+      </div>
+      <label style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-top:16px">Test Payload (JSON)</label>
+      <textarea class="input" id="n8nPayload" rows="4" style="margin-top:6px">{"event": "test", "robot": "agibot_x2", "timestamp": "auto"}</textarea>
+      <button class="btn btn-primary" style="margin-top:8px" onclick="n8nTest()">Send Test Webhook</button>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>Incoming Robot API</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px">
+        n8n (or any service) can control the robot by POSTing to this endpoint:
+      </p>
+      <div class="input" style="background:rgba(99,102,241,0.05);font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent);border-color:rgba(99,102,241,0.15)">
         POST http://<span id="hostAddr">localhost:5000</span>/api/webhook/robot
       </div>
-      <p style="font-size:11px;color:var(--muted);margin-top:12px">Example payloads:</p>
-      <pre class="log" style="max-height:250px">{
+      <p style="font-size:11px;color:var(--text-dim);margin-top:14px;margin-bottom:8px">Example payloads:</p>
+      <pre class="log" style="max-height:280px;line-height:1.6">{
   "action": "emoji",
   "params": {"id": 90}
 }
@@ -298,379 +471,770 @@ select.input { cursor: pointer; }
   </div>
 </div>
 
+<!-- ======= TERMINAL ======= -->
+<div class="page" id="p-term">
+  <div class="grid g23">
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>Robot SSH Terminal</div>
+      <div class="terminal">
+        <div class="terminal-output" id="termOutput">Welcome to Agibot X2 SSH Terminal.\nType commands to execute on the robot.\n\n</div>
+        <div class="terminal-input">
+          <span>agi@x2 $</span>
+          <input id="termInput" placeholder="ros2 topic list" autocomplete="off"/>
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn btn-sm" onclick="termCmd('ros2 topic list')">Topics</button>
+        <button class="btn btn-sm" onclick="termCmd('ros2 service list')">Services</button>
+        <button class="btn btn-sm" onclick="termCmd('ros2 node list')">Nodes</button>
+        <button class="btn btn-sm" onclick="termCmd('uptime')">Uptime</button>
+        <button class="btn btn-sm" onclick="termCmd('free -h')">Memory</button>
+        <button class="btn btn-sm" onclick="termCmd('df -h /')">Disk</button>
+        <button class="btn btn-sm" onclick="termCmd('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader')">GPU</button>
+        <button class="btn btn-sm btn-danger" onclick="clearTerm()">Clear</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="indicator"></span>Quick Reference</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted);line-height:2">
+        <div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Common Commands</div>
+        <div><span style="color:var(--cyan)">ros2 topic list</span> - List all topics</div>
+        <div><span style="color:var(--cyan)">ros2 topic echo &lt;topic&gt; --once</span> - Read topic</div>
+        <div><span style="color:var(--cyan)">ros2 service list</span> - List services</div>
+        <div><span style="color:var(--cyan)">ros2 node list</span> - List active nodes</div>
+        <div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-top:12px;margin-bottom:4px">Robot Info</div>
+        <div>IP: <span style="color:var(--accent)">10.104.218.77</span></div>
+        <div>ROS: <span style="color:var(--accent)">Humble</span></div>
+        <div>User: <span style="color:var(--accent)">agi</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
-// ── Tabs ──
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  event.target.classList.add('active');
-  document.getElementById('tab-' + name).classList.add('active');
-  if (name === 'sim' && !simInited) initSim();
-  if (name === 'lidar' && !lidarInited) initLidar();
+// ── Navigation ──
+function go(id){
+  document.querySelectorAll('.nav-btn').forEach((b,i)=>b.classList.toggle('active',b.textContent.trim()===({ctrl:'Controls',sim:'URDF Sim',lidar:'LiDAR',wf:'Workflows',imu:'IMU',n8n:'n8n',term:'Terminal'})[id]));
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('p-'+id).classList.add('active');
+  // Wait for layout to complete before initializing 3D viewers
+  setTimeout(()=>{
+    if(id==='sim')initSim();
+    if(id==='lidar'&&!lidarInited)initLidar();
+    if(id==='imu'&&!imuInited)initImu();
+  },50);
 }
 
 // ── Log ──
-function log(m) {
-  const b = document.getElementById('logBox');
-  b.textContent += `[${new Date().toLocaleTimeString()}] ${m}\n`;
-  b.scrollTop = b.scrollHeight;
+function log(m){const b=document.getElementById('logBox');const ts=new Date().toLocaleTimeString();b.textContent+=`[${ts}] ${m}\n`;b.scrollTop=b.scrollHeight}
+async function api(url,opts){try{return await(await fetch(url,opts)).json()}catch(e){log('Error: '+e.message);return{error:e.message}}}
+
+// ── Status polling ──
+async function pollStatus(){
+  try{
+    const s=await api('/api/status');
+    const sd=document.getElementById('sshDot'),bd=document.getElementById('botDot');
+    sd.className='status-dot '+(s.ssh?'dot-green':'dot-red');
+    bd.className='status-dot '+(s.robot_server?'dot-green':'dot-red');
+    document.getElementById('sshLabel').textContent='SSH '+(s.ssh?'OK':'Down');
+    document.getElementById('botLabel').textContent='Robot '+(s.robot_server?'OK':'Down');
+  }catch(e){}
 }
-async function api(url, opts) {
-  try { return await (await fetch(url, opts)).json(); }
-  catch(e) { log('Error: ' + e.message); return {error: e.message}; }
-}
+setInterval(pollStatus,5000);
+pollStatus();
 
 // ── Controls ──
-async function emoji(id) { log(`Emoji ${id}`); log((await api(`/api/emoji/${id}`)).result); }
-async function motion(a) { log(`Motion: ${a}`); log((await api(`/api/motion/${a}`)).result); }
-async function setMode(m) { log(`Mode: ${m}`); log((await api(`/api/mode/${m}`)).result); }
-async function speak() {
-  const t = document.getElementById('ttsInput').value;
+async function emoji(id){log(`Emoji ${id}`);log((await api(`/api/emoji/${id}`)).result)}
+async function motion(a){log(`Motion: ${a}`);log((await api(`/api/motion/${a}`)).result)}
+async function setMode(m){log(`Mode: ${m}`);log((await api(`/api/mode/${m}`)).result)}
+async function speak(){
+  const t=document.getElementById('ttsInput').value;
   log(`TTS: ${t}`);
-  log((await api('/api/tts', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:t})})).result);
+  log((await api('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})})).result);
 }
-document.getElementById('ttsInput').addEventListener('keydown', e => { if(e.key==='Enter'){speak();e.preventDefault();e.stopPropagation();} });
+document.getElementById('ttsInput').addEventListener('keydown',e=>{if(e.key==='Enter'){speak();e.preventDefault()}});
 
-// Camera
-const ROBOT_STREAM = 'http://10.104.218.77:8080';
-let camInt = null;
-function camStart() {
-  if(camInt) clearInterval(camInt);
-  const c = document.getElementById('camSel').value;
-  const img = document.getElementById('camImg');
-  const ph = document.getElementById('camPH');
+// ── Camera ──
+const RS='http://10.104.218.77:8080';
+let camInt=null;
+function camStart(){
+  if(camInt)clearInterval(camInt);camInt=null;
+  const c=document.getElementById('camSel').value;
   log(`Camera: ${c}`);
-  // Tell robot server to subscribe to the topic
-  fetch(ROBOT_STREAM + '/camera/start?cam=' + c).catch(() => fetch('/api/camera/start?cam=' + c));
-  // Use direct MJPEG stream from robot
-  img.src = ROBOT_STREAM + '/camera/stream';
-  img.style.display = 'block';
-  ph.style.display = 'none';
-  img.onerror = () => {
-    // Fallback to polling frames
-    log('Direct stream failed, falling back to polling...');
-    img.onerror = null;
-    camInt = setInterval(() => {
-      const i = new Image();
-      i.onload = () => { img.src = i.src; img.style.display = 'block'; ph.style.display = 'none'; };
-      i.src = '/api/camera/frame?' + Date.now();
-    }, 150);
-  };
+  fetch(RS+'/camera/start?cam='+c).catch(()=>fetch('/api/camera/start?cam='+c));
+  camStartPolling();
 }
-function camStop() {
-  if(camInt){clearInterval(camInt);camInt=null;}
-  const img = document.getElementById('camImg');
-  img.src = '';
-  img.style.display = 'none';
-  document.getElementById('camPH').style.display = 'block';
-  fetch(ROBOT_STREAM + '/camera/stop').catch(() => fetch('/api/camera/stop'));
-  log('Camera stopped.');
+function camStop(){
+  if(camInt){clearInterval(camInt);camInt=null}
+  const img=document.getElementById('camImg');img.src='';img.style.display='none';
+  document.getElementById('camPH').style.display='block';
+  document.getElementById('camLive').style.display='none';
+  fetch(RS+'/camera/stop').catch(()=>fetch('/api/camera/stop'));
+  log('Camera stopped');
+}
+function camStartPolling(){
+  if(camInt)return;
+  const img=document.getElementById('camImg'),ph=document.getElementById('camPH'),live=document.getElementById('camLive');
+  camInt=setInterval(()=>{
+    const i=new Image();
+    i.onload=()=>{img.src=i.src;img.style.display='block';ph.style.display='none';live.style.display='block'};
+    i.src='/api/camera/frame?'+Date.now();
+  },200);
 }
 
-// Walk
+// ── AI toggles ──
+async function toggleYolo(){
+  const r=await api('/api/ai/yolo/toggle');const on=r.enabled;
+  document.getElementById('yoloBtn').textContent='YOLO: '+(on?'ON':'OFF');
+  document.getElementById('yoloBtn').className='btn btn-sm'+(on?' btn-success':'');
+  log('YOLO '+(on?'enabled':'disabled'));
+  if(on&&!camInt)camStartPolling();
+}
+async function toggleMotion(){
+  const r=await api('/api/ai/motion/toggle');const on=r.enabled;
+  document.getElementById('motionBtn').textContent='Motion: '+(on?'ON':'OFF');
+  document.getElementById('motionBtn').className='btn btn-sm'+(on?' btn-success':'');
+  log('Motion detect '+(on?'enabled':'disabled'));
+  if(on&&!camInt)camStartPolling();
+}
+async function toggleFaces(){
+  const r=await api('/api/ai/faces/toggle');const on=r.enabled;
+  document.getElementById('faceBtn').textContent='Faces: '+(on?'ON':'OFF');
+  document.getElementById('faceBtn').className='btn btn-sm'+(on?' btn-success':'');
+  log('Face rec '+(on?`enabled (${r.known_count} known)`:'disabled'));
+  if(on&&!camInt)camStartPolling();
+}
+
+// ── Walk ──
 let wF=0,wA=0,walkOn=false;
-function wk(ax,d) {
-  if(!walkOn){log('Enable Walk first!');return;}
-  if(ax==='f')wF=Math.max(-1,Math.min(1,wF+d)); else wA=Math.max(-1,Math.min(1,wA+d));
+function wk(ax,d){
+  if(!walkOn){log('Enable Walk first!');return}
+  if(ax==='f')wF=Math.max(-1,Math.min(1,wF+d));else wA=Math.max(-1,Math.min(1,wA+d));
   document.getElementById('wF').textContent=wF.toFixed(1);
   document.getElementById('wA').textContent=wA.toFixed(1);
   api('/api/walk/vel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({f:wF,a:wA,l:0})});
 }
-function wkStop(){wF=0;wA=0;document.getElementById('wF').textContent='0.0';document.getElementById('wA').textContent='0.0';if(walkOn)api('/api/walk/vel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({f:0,a:0,l:0})});log('STOP');}
-async function walkInit(){log('Enabling walk...');await api('/api/walk/start');walkOn=true;}
-async function walkEnd(){await api('/api/walk/stop');walkOn=false;wF=0;wA=0;log('Walk disabled');}
-document.addEventListener('keydown', e => {
+function wkStop(){wF=0;wA=0;document.getElementById('wF').textContent='0.0';document.getElementById('wA').textContent='0.0';if(walkOn)api('/api/walk/vel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({f:0,a:0,l:0})});log('STOP')}
+async function walkInit(){log('Enabling walk...');await api('/api/walk/start');walkOn=true}
+async function walkEnd(){await api('/api/walk/stop');walkOn=false;wF=0;wA=0;log('Walk disabled')}
+document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT')return;
   if(e.repeat)return;
-  switch(e.key){case 'w':case 'ArrowUp':wk('f',0.3);e.preventDefault();break;case 's':case 'ArrowDown':wk('f',-0.3);e.preventDefault();break;case 'a':case 'ArrowLeft':wk('a',0.2);e.preventDefault();break;case 'd':case 'ArrowRight':wk('a',-0.2);e.preventDefault();break;case ' ':wkStop();e.preventDefault();break;}
+  switch(e.key){case'w':case'ArrowUp':wk('f',0.3);e.preventDefault();break;case's':case'ArrowDown':wk('f',-0.3);e.preventDefault();break;case'a':case'ArrowLeft':wk('a',0.2);e.preventDefault();break;case'd':case'ArrowRight':wk('a',-0.2);e.preventDefault();break;case' ':wkStop();e.preventDefault();break}
 });
 
-// ── 3D Simulator ──
-let simInited = false, simScene, simCamera, simRenderer, simRobot, simMixer, simClock;
-function initSim() {
-  simInited = true;
-  const el = document.getElementById('simViewer');
-  simScene = new THREE.Scene();
-  simScene.background = new THREE.Color(0x080818);
-  simCamera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.1, 100);
-  simCamera.position.set(2, 2, 3);
-  simCamera.lookAt(0, 0.8, 0);
-  simRenderer = new THREE.WebGLRenderer({antialias: true});
-  simRenderer.setSize(el.clientWidth, el.clientHeight);
-  simRenderer.setPixelRatio(window.devicePixelRatio);
+// ── 3D URDF Simulator ──
+let simInited=false,simScene,simCamera,simRenderer,simRobot,simClock;
+let urdfJoints={},urdfData=null;
+const SIM_BASE_Y=0.65; // robot base height so feet touch ground
+
+function initSim(){
+  if(simInited)return;
+  simInited=true;
+  const el=document.getElementById('simViewer');
+
+  // Use el's CSS dimensions (set by .viewer3d class: width:100%, height:450px)
+  const rect=el.getBoundingClientRect();
+  const w=Math.round(rect.width)||800;
+  const h=Math.round(rect.height)||450;
+  console.log('initSim: container',w,'x',h);
+
+  simScene=new THREE.Scene();
+  simScene.background=new THREE.Color(0x0b0b1e);
+
+  simCamera=new THREE.PerspectiveCamera(50,w/h,0.1,100);
+  simCamera.position.set(2,1.5,2);
+  simCamera.lookAt(0,0.7,0);
+
+  simRenderer=new THREE.WebGLRenderer({antialias:true});
+  simRenderer.setSize(w,h);
+  simRenderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
   el.appendChild(simRenderer.domElement);
 
-  // Lights
-  simScene.add(new THREE.AmbientLight(0x404060, 0.6));
-  const dl = new THREE.DirectionalLight(0xffffff, 0.8);
-  dl.position.set(3, 5, 3); simScene.add(dl);
+  // Resize handler
+  window.addEventListener('resize',()=>{
+    const r2=el.getBoundingClientRect();
+    if(r2.width>0&&r2.height>0){
+      simCamera.aspect=r2.width/r2.height;
+      simCamera.updateProjectionMatrix();
+      simRenderer.setSize(Math.round(r2.width),Math.round(r2.height));
+    }
+  });
+
+  // Bright lighting so robot is clearly visible
+  simScene.add(new THREE.AmbientLight(0xffffff,0.6));
+  const sun=new THREE.DirectionalLight(0xffffff,0.8);
+  sun.position.set(5,8,5);
+  simScene.add(sun);
+  const fill=new THREE.DirectionalLight(0x8888ff,0.3);
+  fill.position.set(-3,4,-2);
+  simScene.add(fill);
+
+  // Ground plane
+  const ground=new THREE.Mesh(
+    new THREE.PlaneGeometry(20,20),
+    new THREE.MeshStandardMaterial({color:0x111122,roughness:0.8})
+  );
+  ground.rotation.x=-Math.PI/2;
+  ground.position.y=-0.01;
+  simScene.add(ground);
 
   // Grid
-  const grid = new THREE.GridHelper(10, 20, 0x2a2a5a, 0x1a1a3a);
-  simScene.add(grid);
+  simScene.add(new THREE.GridHelper(10,20,0x333366,0x222244));
 
-  // Simple robot model (stylized humanoid)
-  simRobot = new THREE.Group();
-  const mat = new THREE.MeshPhongMaterial({color: 0x4488cc, flatShading: true});
-  const matDark = new THREE.MeshPhongMaterial({color: 0x2a4466, flatShading: true});
-  const matAccent = new THREE.MeshPhongMaterial({color: 0x00d4ff, emissive: 0x004466});
+  // Load URDF and build robot
+  fetch('/api/urdf').then(r=>r.json()).then(data=>{
+    console.log('URDF loaded:',data.links?.length,'links,',data.joints?.length,'joints');
+    if(!data.joints||!data.links){console.error('Bad URDF data');return}
+    urdfData=data;
+    buildURDFRobot(data);
+    document.getElementById('jointCountLabel').textContent=
+      data.joints.filter(j=>j.type==='revolute').length+' revolute joints';
+  }).catch(e=>console.error('URDF fetch failed:',e));
 
-  // Torso
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.25), mat);
-  torso.position.y = 0.95; torso.name = 'torso'; simRobot.add(torso);
-
-  // Head
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.2, 0.2), mat);
-  head.position.y = 1.35; head.name = 'head'; simRobot.add(head);
-  const face = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.12), matAccent);
-  face.position.set(0, 1.35, 0.101); simRobot.add(face);
-
-  // Arms
-  const armGeo = new THREE.BoxGeometry(0.1, 0.4, 0.1);
-  const lArm = new THREE.Mesh(armGeo, matDark);
-  lArm.position.set(-0.3, 0.9, 0); lArm.name = 'lArm'; simRobot.add(lArm);
-  const rArm = new THREE.Mesh(armGeo, matDark);
-  rArm.position.set(0.3, 0.9, 0); rArm.name = 'rArm'; simRobot.add(rArm);
-
-  // Legs
-  const legGeo = new THREE.BoxGeometry(0.12, 0.5, 0.12);
-  const lLeg = new THREE.Mesh(legGeo, matDark);
-  lLeg.position.set(-0.12, 0.35, 0); lLeg.name = 'lLeg'; simRobot.add(lLeg);
-  const rLeg = new THREE.Mesh(legGeo, matDark);
-  rLeg.position.set(0.12, 0.35, 0); rLeg.name = 'rLeg'; simRobot.add(rLeg);
-
-  // Feet
-  const footGeo = new THREE.BoxGeometry(0.14, 0.06, 0.2);
-  const lFoot = new THREE.Mesh(footGeo, mat);
-  lFoot.position.set(-0.12, 0.08, 0.03); simRobot.add(lFoot);
-  const rFoot = new THREE.Mesh(footGeo, mat);
-  rFoot.position.set(0.12, 0.08, 0.03); simRobot.add(rFoot);
-
-  simScene.add(simRobot);
-  simClock = new THREE.Clock();
-
-  // Mouse controls
-  let drag = false, prevX, prevY, theta = 0.8, phi = 0.6, radius = 4;
-  function updateCam() {
-    simCamera.position.set(radius*Math.sin(theta)*Math.cos(phi), radius*Math.sin(phi), radius*Math.cos(theta)*Math.cos(phi));
-    simCamera.lookAt(0, 0.8, 0);
+  // Orbit camera
+  let dragging=false,lastX=0,lastY=0;
+  let orbitTheta=0.8,orbitPhi=0.4,orbitR=3.5;
+  function updateOrbitCam(){
+    const cp=Math.cos(orbitPhi),sp=Math.sin(orbitPhi);
+    const ct=Math.cos(orbitTheta),st=Math.sin(orbitTheta);
+    simCamera.position.set(orbitR*st*cp, orbitR*sp+0.7, orbitR*ct*cp);
+    simCamera.lookAt(0,0.7,0);
   }
-  simRenderer.domElement.addEventListener('mousedown', e => { drag=true; prevX=e.clientX; prevY=e.clientY; });
-  window.addEventListener('mouseup', () => drag=false);
-  window.addEventListener('mousemove', e => {
-    if(!drag) return;
-    theta -= (e.clientX-prevX)*0.01; phi += (e.clientY-prevY)*0.01;
-    phi = Math.max(-1.2, Math.min(1.2, phi));
-    prevX=e.clientX; prevY=e.clientY; updateCam();
+  updateOrbitCam();
+  const cvs=simRenderer.domElement;
+  cvs.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;cvs.setPointerCapture(e.pointerId)});
+  cvs.addEventListener('pointerup',e=>{dragging=false;cvs.releasePointerCapture(e.pointerId)});
+  cvs.addEventListener('pointermove',e=>{
+    if(!dragging)return;
+    orbitTheta-=(e.clientX-lastX)*0.008;
+    orbitPhi+=(e.clientY-lastY)*0.008;
+    orbitPhi=Math.max(-0.3,Math.min(1.3,orbitPhi));
+    lastX=e.clientX;lastY=e.clientY;
+    updateOrbitCam();
   });
-  simRenderer.domElement.addEventListener('wheel', e => { radius = Math.max(1.5, Math.min(10, radius + e.deltaY*0.005)); updateCam(); e.preventDefault(); });
+  cvs.addEventListener('wheel',e=>{orbitR=Math.max(1,Math.min(8,orbitR+e.deltaY*0.004));updateOrbitCam();e.preventDefault()},{passive:false});
 
-  // Animation loop
-  let animType = 'idle', animTime = 0;
-  window._simAnim = (type) => { animType = type; animTime = 0; };
+  // Animation
+  simClock=new THREE.Clock();
+  let animType='idle',animTime=0;
+  window._simAnim=t=>{animType=t;animTime=0};
 
-  function animate() {
+  function animate(){
     requestAnimationFrame(animate);
-    const dt = simClock.getDelta();
-    animTime += dt;
-    const t = animTime;
+    const dt=simClock.getDelta();
+    animTime+=dt;
+    const t=animTime;
 
-    const lArm = simRobot.getObjectByName('lArm');
-    const rArm = simRobot.getObjectByName('rArm');
-    const lLeg = simRobot.getObjectByName('lLeg');
-    const rLeg = simRobot.getObjectByName('rLeg');
-    const head = simRobot.getObjectByName('head');
-
-    if (animType === 'idle') {
-      // Gentle breathing
-      simRobot.position.y = Math.sin(t * 1.5) * 0.01;
-      lArm.rotation.z = 0; rArm.rotation.z = 0;
-      lLeg.rotation.x = 0; rLeg.rotation.x = 0;
-      head.rotation.y = Math.sin(t * 0.5) * 0.1;
-    } else if (animType === 'wave') {
-      rArm.rotation.z = -Math.PI/2 + Math.sin(t * 4) * 0.3;
-      rArm.position.y = 1.1;
-      lArm.rotation.z = 0;
-      head.rotation.y = Math.sin(t * 2) * 0.15;
-    } else if (animType === 'walk') {
-      const s = Math.sin(t * 4);
-      lLeg.rotation.x = s * 0.4;
-      rLeg.rotation.x = -s * 0.4;
-      lArm.rotation.x = -s * 0.3;
-      rArm.rotation.x = s * 0.3;
-      simRobot.position.y = Math.abs(Math.sin(t * 8)) * 0.02;
-      head.rotation.y = 0;
+    if(simRobot){
+      if(animType==='wave'){
+        setJointAngle('right_shoulder_pitch_joint',-2.5+Math.sin(t*4)*0.3);
+        setJointAngle('right_shoulder_roll_joint',-0.5);
+        setJointAngle('right_elbow_joint',-0.8+Math.sin(t*5)*0.4);
+        setJointAngle('head_yaw_joint',Math.sin(t*2)*0.2);
+        simRobot.position.y=SIM_BASE_Y;
+      }else if(animType==='walk'){
+        const s=Math.sin(t*4);
+        setJointAngle('left_hip_pitch_joint',-0.3+s*0.3);
+        setJointAngle('right_hip_pitch_joint',-0.3-s*0.3);
+        setJointAngle('left_knee_joint',0.6-s*0.2);
+        setJointAngle('right_knee_joint',0.6+s*0.2);
+        setJointAngle('left_ankle_pitch_joint',-0.1+s*0.1);
+        setJointAngle('right_ankle_pitch_joint',-0.1-s*0.1);
+        setJointAngle('left_shoulder_pitch_joint',-s*0.25);
+        setJointAngle('right_shoulder_pitch_joint',s*0.25);
+        setJointAngle('left_elbow_joint',-0.3);
+        setJointAngle('right_elbow_joint',-0.3);
+        simRobot.position.y=SIM_BASE_Y+Math.abs(Math.sin(t*8))*0.01;
+      }else if(animType==='dance'){
+        const s1=Math.sin(t*3),s2=Math.sin(t*6),s3=Math.sin(t*1.5);
+        // Bounce
+        setJointAngle('left_knee_joint',0.3+s2*0.2);
+        setJointAngle('right_knee_joint',0.3-s2*0.2);
+        setJointAngle('left_hip_pitch_joint',-0.15-s2*0.1);
+        setJointAngle('right_hip_pitch_joint',-0.15+s2*0.1);
+        // Waist sway
+        setJointAngle('waist_yaw_joint',s1*0.3);
+        setJointAngle('waist_roll_joint',s1*0.15);
+        // Arms groove
+        setJointAngle('left_shoulder_pitch_joint',-1.5+s1*0.5);
+        setJointAngle('right_shoulder_pitch_joint',-1.5-s1*0.5);
+        setJointAngle('left_shoulder_roll_joint',0.4+Math.sin(t*4)*0.3);
+        setJointAngle('right_shoulder_roll_joint',-0.4-Math.sin(t*4)*0.3);
+        setJointAngle('left_elbow_joint',-1.2+Math.sin(t*5)*0.4);
+        setJointAngle('right_elbow_joint',-1.2-Math.sin(t*5)*0.4);
+        // Head bop
+        setJointAngle('head_yaw_joint',s3*0.2);
+        setJointAngle('head_pitch_joint',Math.abs(s2)*0.1);
+        simRobot.position.y=SIM_BASE_Y+Math.abs(s2)*0.015;
+      }else if(animType==='look'){
+        setJointAngle('head_yaw_joint',Math.sin(t*0.8)*0.35);
+        setJointAngle('head_pitch_joint',Math.sin(t*1.2)*0.25);
+        setJointAngle('waist_yaw_joint',Math.sin(t*0.5)*0.2);
+        simRobot.position.y=SIM_BASE_Y+Math.sin(t*1.5)*0.003;
+      }else{
+        // idle breathing
+        simRobot.position.y=SIM_BASE_Y+Math.sin(t*1.5)*0.005;
+      }
     }
-    simRenderer.render(simScene, simCamera);
+    simRenderer.render(simScene,simCamera);
   }
   animate();
+  console.log('Sim animation started');
 }
-function simReset() { if(simInited) window._simAnim('idle'); }
-function simAnimate(type) { if(simInited) window._simAnim(type); }
+
+function buildURDFRobot(data){
+  simRobot=new THREE.Group();
+  const linkGroups={};
+  const stlLoader=new THREE.STLLoader();
+
+  // Skip IMU/sensor links that are tiny invisible parts
+  const skipMesh=new Set(['imu_in_pelvis_link','imu_in_torso_link','imu_in_head_link']);
+
+  // Create a THREE.Group for every link, then async-load its STL mesh
+  data.links.forEach(l=>{
+    const g=new THREE.Group();
+    g.name=l.name;
+    linkGroups[l.name]=g;
+
+    if(!l.mesh||skipMesh.has(l.name)) return;
+
+    // Material from URDF color
+    let color=0x888888;
+    if(l.color){
+      const r=Math.round(l.color[0]*255);
+      const gv=Math.round(l.color[1]*255);
+      const b=Math.round(l.color[2]*255);
+      color=(r<<16)|(gv<<8)|b;
+    }
+    const mat=new THREE.MeshStandardMaterial({
+      color:color,
+      roughness:0.55,
+      metalness:0.35,
+      flatShading:false
+    });
+
+    // Load STL mesh from Flask endpoint
+    stlLoader.load('/api/urdf/mesh/'+l.mesh,
+      function(geometry){
+        geometry.computeVertexNormals();
+        const mesh=new THREE.Mesh(geometry,mat);
+        // URDF meshes are in URDF coords (X=fwd,Y=left,Z=up)
+        // Three.js: X=X, Y=up(Z), Z=back(-Y)
+        // Rotate the mesh to convert coordinate system
+        mesh.rotation.set(-Math.PI/2,0,0);
+        g.add(mesh);
+        console.log('Loaded:',l.name);
+      },
+      undefined,
+      function(err){console.warn('Failed to load mesh:',l.name,l.mesh)}
+    );
+  });
+
+  // Build kinematic tree by processing joints
+  const childSet=new Set();
+  data.joints.forEach(j=>{
+    childSet.add(j.child);
+    const parentGrp=linkGroups[j.parent];
+    const childGrp=linkGroups[j.child];
+    if(!parentGrp||!childGrp)return;
+
+    const pivot=new THREE.Group();
+    pivot.name='jnt_'+j.name;
+    // URDF XYZ -> Three.js: X=X, Y=Z, Z=-Y
+    pivot.position.set(j.xyz[0], j.xyz[2], -j.xyz[1]);
+    pivot.add(childGrp);
+    parentGrp.add(pivot);
+
+    if(j.type==='revolute'){
+      urdfJoints[j.name]={pivot:pivot, axis:j.axis, lower:j.lower, upper:j.upper, angle:0};
+    }
+  });
+
+  // Find root link (not a child of any joint)
+  let rootName=null;
+  for(const l of data.links){
+    if(!childSet.has(l.name)){rootName=l.name;break;}
+  }
+  console.log('Root link:',rootName,'| Total links:',data.links.length);
+  const root=linkGroups[rootName||'pelvis'];
+  if(root) simRobot.add(root);
+
+  simRobot.position.set(0,SIM_BASE_Y,0);
+  simScene.add(simRobot);
+
+  buildJointControls(data.joints);
+}
+
+function setJointAngle(name,angle){
+  const j=urdfJoints[name];
+  if(!j)return;
+  angle=Math.max(j.lower,Math.min(j.upper,angle));
+  j.angle=angle;
+
+  // URDF axis to Three.js rotation:
+  // URDF X-axis rotation -> Three.js X rotation
+  // URDF Y-axis rotation -> Three.js -Z rotation
+  // URDF Z-axis rotation -> Three.js Y rotation
+  const ax=j.axis;
+  j.pivot.rotation.set(0,0,0);
+  if(Math.abs(ax[0])>0.5)      j.pivot.rotation.x = angle * ax[0];
+  else if(Math.abs(ax[1])>0.5) j.pivot.rotation.z = -angle * ax[1];
+  else if(Math.abs(ax[2])>0.5) j.pivot.rotation.y = angle * ax[2];
+
+  const slider=document.getElementById('slider_'+name);
+  if(slider)slider.value=angle;
+  const valEl=document.getElementById('val_'+name);
+  if(valEl)valEl.textContent=angle.toFixed(2);
+}
+
+function buildJointControls(joints){
+  const el=document.getElementById('jointControls');
+  el.innerHTML='';
+  const revolutes=joints.filter(j=>j.type==='revolute');
+  const groups={Legs:[],Waist:[],Arms:[],Wrists:[],Head:[]};
+  revolutes.forEach(j=>{
+    if(j.name.includes('hip')||j.name.includes('knee')||j.name.includes('ankle'))groups.Legs.push(j);
+    else if(j.name.includes('waist'))groups.Waist.push(j);
+    else if(j.name.includes('shoulder')||j.name.includes('elbow'))groups.Arms.push(j);
+    else if(j.name.includes('wrist'))groups.Wrists.push(j);
+    else if(j.name.includes('head'))groups.Head.push(j);
+  });
+  Object.entries(groups).forEach(([group,jts])=>{
+    if(!jts.length)return;
+    // Collapsible header
+    const hdr=document.createElement('div');
+    hdr.className='joint-group-hdr';
+    hdr.innerHTML=`<span style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted);font-weight:600">${group} <span style="color:var(--text-dim);font-weight:400">(${jts.length})</span></span><span class="arrow">&#9660;</span>`;
+    el.appendChild(hdr);
+    // Body
+    const body=document.createElement('div');
+    body.className='joint-group-body';
+    body.style.maxHeight='2000px';
+    jts.forEach(j=>{
+      const d=document.createElement('div');d.className='joint-slider';
+      const short=j.name.replace('_joint','').replace('left_','L ').replace('right_','R ');
+      d.innerHTML=`<label><span>${short}</span><span id="val_${j.name}">0.00</span></label>
+        <input type="range" id="slider_${j.name}" min="${j.lower}" max="${j.upper}" step="0.01" value="0"
+          oninput="setJointAngle('${j.name}',parseFloat(this.value))"/>`;
+      body.appendChild(d);
+    });
+    el.appendChild(body);
+    hdr.onclick=()=>{
+      body.classList.toggle('collapsed');
+      hdr.querySelector('.arrow').classList.toggle('collapsed');
+    };
+  });
+}
+function toggleAllJoints(){
+  const bodies=document.querySelectorAll('.joint-group-body');
+  const arrows=document.querySelectorAll('.joint-group-hdr .arrow');
+  const allCollapsed=[...bodies].every(b=>b.classList.contains('collapsed'));
+  bodies.forEach(b=>b.classList.toggle('collapsed',!allCollapsed));
+  arrows.forEach(a=>a.classList.toggle('collapsed',!allCollapsed));
+  document.getElementById('jToggleBtn').textContent=allCollapsed?'Collapse All':'Expand All';
+}
+
+// ── Preset Poses (keyframe data from URDF joint limits) ──
+const POSES={
+  stand:{},
+  crouch:{
+    left_hip_pitch_joint:-0.8, right_hip_pitch_joint:-0.8,
+    left_knee_joint:1.6, right_knee_joint:1.6,
+    left_ankle_pitch_joint:-0.6, right_ankle_pitch_joint:-0.6,
+    left_shoulder_pitch_joint:-0.3, right_shoulder_pitch_joint:-0.3,
+    left_elbow_joint:-0.5, right_elbow_joint:-0.5,
+  },
+  sit:{
+    left_hip_pitch_joint:-1.5, right_hip_pitch_joint:-1.5,
+    left_knee_joint:2.2, right_knee_joint:2.2,
+    left_ankle_pitch_joint:-0.5, right_ankle_pitch_joint:-0.5,
+    waist_pitch_joint:0.1,
+    left_shoulder_pitch_joint:-0.4, right_shoulder_pitch_joint:-0.4,
+    left_elbow_joint:-0.8, right_elbow_joint:-0.8,
+  },
+  tpose:{
+    left_shoulder_pitch_joint:0, right_shoulder_pitch_joint:0,
+    left_shoulder_roll_joint:1.5, right_shoulder_roll_joint:-1.5,
+    left_elbow_joint:0, right_elbow_joint:0,
+  },
+  bow:{
+    waist_pitch_joint:0.3,
+    left_shoulder_pitch_joint:0.3, right_shoulder_pitch_joint:0.3,
+    head_pitch_joint:-0.3,
+  },
+  handsUp:{
+    left_shoulder_pitch_joint:-2.8, right_shoulder_pitch_joint:-2.8,
+    left_elbow_joint:0, right_elbow_joint:0,
+    left_shoulder_roll_joint:0.3, right_shoulder_roll_joint:-0.3,
+    head_pitch_joint:0.2,
+  },
+};
+
+let poseAnimId=null;
+function playPose(name){
+  simAnimate('idle');
+  const target=POSES[name]||{};
+  // Smoothly interpolate to target pose
+  if(poseAnimId)cancelAnimationFrame(poseAnimId);
+  const start={};const startTime=performance.now();const dur=600;
+  Object.keys(urdfJoints).forEach(k=>{start[k]=urdfJoints[k].angle});
+  function step(now){
+    const t=Math.min(1,(now-startTime)/dur);
+    const ease=t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2; // easeInOutQuad
+    Object.keys(urdfJoints).forEach(k=>{
+      const from=start[k]||0;
+      const to=target[k]||0;
+      setJointAngle(k,from+(to-from)*ease);
+    });
+    if(t<1)poseAnimId=requestAnimationFrame(step);
+    else{
+      // Also adjust base Y for sit/crouch
+      if(name==='sit'&&simRobot)simRobot.position.y=0.35;
+      if(name==='crouch'&&simRobot)simRobot.position.y=0.45;
+    }
+  }
+  if(simRobot)simRobot.position.y=SIM_BASE_Y;
+  poseAnimId=requestAnimationFrame(step);
+}
+
+// ── Robot preset motion (send to real robot) ──
+async function presetMotion(mid,aid){
+  log(`Preset motion ${mid} area ${aid}`);
+  log((await api('/api/preset_motion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({motion_id:mid,area_id:aid})})).result);
+}
+
+function resetJoints(){
+  Object.keys(urdfJoints).forEach(k=>setJointAngle(k,0));
+  if(simRobot)simRobot.position.y=SIM_BASE_Y;
+  if(window._simAnim)window._simAnim('idle');
+}
+
+function simReset(){resetJoints()}
+function simAnimate(type){window._simAnim&&window._simAnim(type)}
 
 // ── LiDAR ──
-let lidarInited = false, lidarScene, lidarCamera, lidarRenderer, lidarPointCloud, lidarAllPoints = [];
-function initLidar() {
-  lidarInited = true;
-  const el = document.getElementById('lidarViewer');
-  lidarScene = new THREE.Scene();
-  lidarScene.background = new THREE.Color(0x080818);
-  lidarCamera = new THREE.PerspectiveCamera(60, el.clientWidth/el.clientHeight, 0.1, 500);
-  lidarCamera.position.set(0, 15, 15);
-  lidarCamera.lookAt(0, 0, 0);
-  lidarRenderer = new THREE.WebGLRenderer({antialias: true});
-  lidarRenderer.setSize(el.clientWidth, el.clientHeight);
+let lidarInited=false,lidarScene,lidarCamera,lidarRenderer,lidarPC,lidarAllPts=[];
+function initLidar(){
+  lidarInited=true;
+  const el=document.getElementById('lidarViewer');
+  const rect=el.getBoundingClientRect();
+  const w=Math.round(rect.width)||800,h=Math.round(rect.height)||500;
+  lidarScene=new THREE.Scene();lidarScene.background=new THREE.Color(0x060612);
+  lidarCamera=new THREE.PerspectiveCamera(60,w/h,0.1,500);
+  lidarCamera.position.set(0,15,15);lidarCamera.lookAt(0,0,0);
+  lidarRenderer=new THREE.WebGLRenderer({antialias:true});
+  lidarRenderer.setSize(w,h);
+  lidarRenderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
   el.appendChild(lidarRenderer.domElement);
+  new ResizeObserver(()=>{const rw=el.clientWidth,rh=el.clientHeight;if(rw>0&&rh>0){lidarCamera.aspect=rw/rh;lidarCamera.updateProjectionMatrix();lidarRenderer.setSize(rw,rh)}}).observe(el);
 
-  const grid = new THREE.GridHelper(50, 50, 0x1a1a3a, 0x111128);
-  lidarScene.add(grid);
+  lidarScene.add(new THREE.GridHelper(50,50,0x1a1a3a,0x0d0d1a));
 
-  // Point cloud
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute([], 3));
-  const pmat = new THREE.PointsMaterial({size: 0.05, vertexColors: true, sizeAttenuation: true});
-  lidarPointCloud = new THREE.Points(geo, pmat);
-  lidarScene.add(lidarPointCloud);
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.Float32BufferAttribute([],3));
+  geo.setAttribute('color',new THREE.Float32BufferAttribute([],3));
+  lidarPC=new THREE.Points(geo,new THREE.PointsMaterial({size:0.06,vertexColors:true,sizeAttenuation:true}));
+  lidarScene.add(lidarPC);
 
   // Robot marker
-  const marker = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.6, 4), new THREE.MeshBasicMaterial({color: 0x00d4ff}));
-  marker.rotation.x = -Math.PI/2; marker.position.y = 0.3;
-  lidarScene.add(marker);
+  const marker=new THREE.Mesh(new THREE.ConeGeometry(0.3,0.6,4),new THREE.MeshBasicMaterial({color:0x6366f1}));
+  marker.rotation.x=-Math.PI/2;marker.position.y=0.3;lidarScene.add(marker);
 
-  // Mouse orbit
   let drag=false,px,py,th=0,ph=0.8,r=20;
-  function uc(){lidarCamera.position.set(r*Math.sin(th)*Math.cos(ph),r*Math.sin(ph),r*Math.cos(th)*Math.cos(ph));lidarCamera.lookAt(0,0,0);}
-  lidarRenderer.domElement.addEventListener('mousedown',e=>{drag=true;px=e.clientX;py=e.clientY;});
+  function uc(){lidarCamera.position.set(r*Math.sin(th)*Math.cos(ph),r*Math.sin(ph),r*Math.cos(th)*Math.cos(ph));lidarCamera.lookAt(0,0,0)}
+  lidarRenderer.domElement.addEventListener('mousedown',e=>{drag=true;px=e.clientX;py=e.clientY});
   window.addEventListener('mouseup',()=>drag=false);
-  window.addEventListener('mousemove',e=>{if(!drag)return;th-=(e.clientX-px)*0.01;ph+=(e.clientY-py)*0.01;ph=Math.max(0.1,Math.min(1.4,ph));px=e.clientX;py=e.clientY;uc();});
-  lidarRenderer.domElement.addEventListener('wheel',e=>{r=Math.max(3,Math.min(50,r+e.deltaY*0.02));uc();e.preventDefault();});
+  window.addEventListener('mousemove',e=>{if(!drag)return;th-=(e.clientX-px)*0.01;ph+=(e.clientY-py)*0.01;ph=Math.max(0.1,Math.min(1.4,ph));px=e.clientX;py=e.clientY;uc()});
+  lidarRenderer.domElement.addEventListener('wheel',e=>{r=Math.max(3,Math.min(50,r+e.deltaY*0.02));uc();e.preventDefault()});
 
-  function animLidar() {
-    requestAnimationFrame(animLidar);
-    lidarRenderer.render(lidarScene, lidarCamera);
-  }
-  animLidar();
+  (function anim(){requestAnimationFrame(anim);lidarRenderer.render(lidarScene,lidarCamera)})();
 }
-let lidarPollInt = null;
-function lidarStart() {
-  log('Starting LiDAR...');
-  fetch('/api/lidar/start');
-  if (lidarPollInt) clearInterval(lidarPollInt);
-  lidarPollInt = setInterval(async () => {
-    const r = await api('/api/lidar/points');
-    if (r.points && r.points.length > 0) {
-      lidarAllPoints = lidarAllPoints.concat(r.points);
-      if (lidarAllPoints.length > 50000) lidarAllPoints = lidarAllPoints.slice(-50000);
+let lidarPI=null;
+function lidarStart(){
+  log('Starting LiDAR...');fetch('/api/lidar/start');
+  if(lidarPI)clearInterval(lidarPI);
+  lidarPI=setInterval(async()=>{
+    const r=await api('/api/lidar/points');
+    if(r.points&&r.points.length>0){
+      lidarAllPts=lidarAllPts.concat(r.points);
+      if(lidarAllPts.length>50000)lidarAllPts=lidarAllPts.slice(-50000);
       updateLidarCloud();
     }
-  }, 500);
+  },500);
 }
-function lidarStop() { if(lidarPollInt){clearInterval(lidarPollInt);lidarPollInt=null;} fetch('/api/lidar/stop'); log('LiDAR stopped'); }
-function lidarClear() { lidarAllPoints = []; updateLidarCloud(); log('Map cleared'); }
-function updateLidarCloud() {
-  if (!lidarPointCloud) return;
-  const pos = [], col = [];
-  lidarAllPoints.forEach(p => {
-    pos.push(p[0], p[2], -p[1]); // ROS to Three.js coords
-    const h = Math.min(1, Math.max(0, (p[2] + 1) / 3));
-    col.push(h * 0.2, 0.5 + h * 0.5, 1 - h * 0.5); // height-based coloring
+function lidarStop(){if(lidarPI){clearInterval(lidarPI);lidarPI=null}fetch('/api/lidar/stop');log('LiDAR stopped')}
+function lidarClear(){lidarAllPts=[];updateLidarCloud();log('Map cleared')}
+function updateLidarCloud(){
+  if(!lidarPC)return;
+  const pos=[],col=[];
+  lidarAllPts.forEach(p=>{
+    pos.push(p[0],p[2],-p[1]);
+    const h=Math.min(1,Math.max(0,(p[2]+1)/3));
+    col.push(0.2+h*0.2,0.3+h*0.5,0.8-h*0.3);
   });
-  lidarPointCloud.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  lidarPointCloud.geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  lidarPointCloud.geometry.attributes.position.needsUpdate = true;
-  lidarPointCloud.geometry.attributes.color.needsUpdate = true;
-  document.getElementById('lidarCount').textContent = lidarAllPoints.length;
+  lidarPC.geometry.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  lidarPC.geometry.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+  lidarPC.geometry.attributes.position.needsUpdate=true;
+  lidarPC.geometry.attributes.color.needsUpdate=true;
+  document.getElementById('lidarCount').textContent=lidarAllPts.length;
 }
 
 // ── Workflows ──
-let currentWf = {id: null, name: '', steps: []};
-function wfNew() { currentWf = {id: null, name: '', steps: []}; document.getElementById('wfName').value = ''; renderWfSteps(); }
-function wfAddStep() {
-  currentWf.steps.push({type: 'emoji', params: {id: 90}, delay: 0});
-  renderWfSteps();
-}
-function renderWfSteps() {
-  const el = document.getElementById('wfSteps');
-  el.innerHTML = '';
-  currentWf.steps.forEach((s, i) => {
-    const div = document.createElement('div');
-    div.className = 'wf-step';
-    div.innerHTML = `
-      <select onchange="wfStepType(${i},this.value)" class="input" style="width:100px">
-        <option value="emoji" ${s.type==='emoji'?'selected':''}>Emoji</option>
-        <option value="tts" ${s.type==='tts'?'selected':''}>TTS</option>
-        <option value="motion" ${s.type==='motion'?'selected':''}>Motion</option>
-        <option value="mode" ${s.type==='mode'?'selected':''}>Mode</option>
-        <option value="wait" ${s.type==='wait'?'selected':''}>Wait</option>
-        <option value="shell" ${s.type==='shell'?'selected':''}>Shell</option>
-        <option value="n8n_webhook" ${s.type==='n8n_webhook'?'selected':''}>n8n Hook</option>
-      </select>
-      <input class="input" style="flex:1" placeholder="params (JSON)" value='${JSON.stringify(s.params)}' onchange="wfStepParams(${i},this.value)"/>
-      <input class="input" style="width:60px" type="number" placeholder="delay" value="${s.delay||0}" onchange="wfStepDelay(${i},this.value)" title="Delay (seconds)"/>
-      <button class="btn danger sm" onclick="wfRemoveStep(${i})">X</button>
-    `;
-    el.appendChild(div);
+let currentWf={id:null,name:'',steps:[]};
+function wfNew(){currentWf={id:null,name:'',steps:[]};document.getElementById('wfName').value='';renderWfSteps()}
+function wfAddStep(){currentWf.steps.push({type:'emoji',params:{id:90},delay:0});renderWfSteps()}
+function renderWfSteps(){
+  const el=document.getElementById('wfSteps');el.innerHTML='';
+  currentWf.steps.forEach((s,i)=>{
+    const d=document.createElement('div');d.className='wf-step';
+    d.innerHTML=`<select onchange="wfStepType(${i},this.value)" class="input" style="width:100px">
+      <option value="emoji"${s.type==='emoji'?' selected':''}>Emoji</option>
+      <option value="tts"${s.type==='tts'?' selected':''}>TTS</option>
+      <option value="motion"${s.type==='motion'?' selected':''}>Motion</option>
+      <option value="mode"${s.type==='mode'?' selected':''}>Mode</option>
+      <option value="wait"${s.type==='wait'?' selected':''}>Wait</option>
+      <option value="shell"${s.type==='shell'?' selected':''}>Shell</option>
+      <option value="n8n_webhook"${s.type==='n8n_webhook'?' selected':''}>n8n Hook</option>
+    </select>
+    <input class="input" style="flex:1" placeholder="params JSON" value='${JSON.stringify(s.params)}' onchange="wfStepParams(${i},this.value)"/>
+    <input class="input" style="width:56px" type="number" placeholder="delay" value="${s.delay||0}" onchange="wfStepDelay(${i},this.value)" title="Delay (s)"/>
+    <button class="btn btn-danger btn-sm" onclick="wfRemoveStep(${i})">X</button>`;
+    el.appendChild(d);
   });
 }
-function wfStepType(i, v) { currentWf.steps[i].type = v; }
-function wfStepParams(i, v) { try { currentWf.steps[i].params = JSON.parse(v); } catch {} }
-function wfStepDelay(i, v) { currentWf.steps[i].delay = parseFloat(v) || 0; }
-function wfRemoveStep(i) { currentWf.steps.splice(i, 1); renderWfSteps(); }
-
-async function wfSave() {
-  currentWf.name = document.getElementById('wfName').value || 'Untitled';
-  const r = await api('/api/workflows', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(currentWf)});
-  currentWf.id = r.id;
-  log(`Workflow saved: ${currentWf.name}`);
-  loadWfList();
+function wfStepType(i,v){currentWf.steps[i].type=v}
+function wfStepParams(i,v){try{currentWf.steps[i].params=JSON.parse(v)}catch{}}
+function wfStepDelay(i,v){currentWf.steps[i].delay=parseFloat(v)||0}
+function wfRemoveStep(i){currentWf.steps.splice(i,1);renderWfSteps()}
+async function wfSave(){
+  currentWf.name=document.getElementById('wfName').value||'Untitled';
+  const r=await api('/api/workflows',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentWf)});
+  currentWf.id=r.id;log(`Workflow saved: ${currentWf.name}`);loadWfList();
 }
-async function wfRun() {
-  if (!currentWf.id) { log('Save workflow first!'); return; }
-  log(`Running workflow: ${currentWf.name}...`);
-  const r = await api(`/api/workflows/${currentWf.id}/run`, {method:'POST'});
-  (r.results||[]).forEach(s => log(`  Step ${s.step.type}: ${s.result}`));
-  log('Workflow complete.');
+async function wfRun(){
+  if(!currentWf.id){log('Save workflow first!');return}
+  log(`Running: ${currentWf.name}...`);
+  const r=await api(`/api/workflows/${currentWf.id}/run`,{method:'POST'});
+  (r.results||[]).forEach(s=>log(`  ${s.step.type}: ${s.result}`));log('Done.');
 }
-async function loadWfList() {
-  const wfs = await api('/api/workflows');
-  const el = document.getElementById('wfList');
-  if (!Array.isArray(wfs) || wfs.length === 0) { el.innerHTML = '<p style="color:#555">No workflows yet.</p>'; return; }
-  el.innerHTML = '';
-  wfs.forEach(w => {
-    const div = document.createElement('div');
-    div.className = 'wf-item';
-    div.innerHTML = `<span class="name">${w.name}</span><span style="color:var(--muted);font-size:11px">${(w.steps||[]).length} steps</span>
-      <button class="btn sm primary" onclick='loadWf(${JSON.stringify(JSON.stringify(w))})'>Edit</button>
-      <button class="btn sm success" onclick="runWfById('${w.id}')">Run</button>
-      <button class="btn sm danger" onclick="deleteWf('${w.id}')">Del</button>`;
-    el.appendChild(div);
+async function loadWfList(){
+  const wfs=await api('/api/workflows');const el=document.getElementById('wfList');
+  if(!Array.isArray(wfs)||wfs.length===0){el.innerHTML='<p style="color:var(--text-dim);font-size:12px">No workflows yet.</p>';return}
+  el.innerHTML='';
+  wfs.forEach(w=>{
+    const d=document.createElement('div');d.className='wf-item';
+    d.innerHTML=`<span class="name">${w.name}</span><span style="color:var(--text-dim);font-size:11px">${(w.steps||[]).length} steps</span>
+      <button class="btn btn-sm btn-primary" onclick='loadWf(${JSON.stringify(JSON.stringify(w))})'>Edit</button>
+      <button class="btn btn-sm btn-success" onclick="runWfById('${w.id}')">Run</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteWf('${w.id}')">Del</button>`;
+    el.appendChild(d);
   });
 }
-function loadWf(json) { currentWf = JSON.parse(json); document.getElementById('wfName').value = currentWf.name; renderWfSteps(); }
-async function runWfById(id) { log('Running workflow...'); const r = await api(`/api/workflows/${id}/run`,{method:'POST'}); (r.results||[]).forEach(s=>log(`  ${s.step.type}: ${s.result}`)); }
-async function deleteWf(id) { await api(`/api/workflows/${id}`,{method:'DELETE'}); loadWfList(); }
+function loadWf(json){currentWf=JSON.parse(json);document.getElementById('wfName').value=currentWf.name;renderWfSteps()}
+async function runWfById(id){log('Running workflow...');const r=await api(`/api/workflows/${id}/run`,{method:'POST'});(r.results||[]).forEach(s=>log(`  ${s.step.type}: ${s.result}`))}
+async function deleteWf(id){await api(`/api/workflows/${id}`,{method:'DELETE'});loadWfList()}
 
 // ── n8n ──
-async function n8nSave() {
-  const url = document.getElementById('n8nUrl').value;
-  await api('/api/n8n/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({webhook_url:url})});
+async function n8nSave(){
+  const url=document.getElementById('n8nUrl').value;
+  await api('/api/n8n/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({webhook_url:url})});
   log('n8n webhook URL saved');
 }
-async function n8nTest() {
-  const url = document.getElementById('n8nUrl').value;
-  let payload;
-  try { payload = JSON.parse(document.getElementById('n8nPayload').value); }
-  catch { log('Invalid JSON payload'); return; }
+async function n8nTest(){
+  const url=document.getElementById('n8nUrl').value;let payload;
+  try{payload=JSON.parse(document.getElementById('n8nPayload').value)}catch{log('Invalid JSON');return}
   log('Sending n8n webhook...');
-  const r = await api('/api/n8n/trigger', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url, payload})});
-  log(r.result || r.error);
+  const r=await api('/api/n8n/trigger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,payload})});
+  log(r.result||r.error);
+}
+
+// ── IMU ──
+let imuInited=false,imuScene,imuCamera,imuRenderer,imuBox,imuPI;
+let imuHist={x:[],y:[],z:[]};const IMU_HL=100;
+function initImu(){
+  if(imuInited)return;imuInited=true;
+  const el=document.getElementById('imuViewer');
+  const rect=el.getBoundingClientRect();
+  const w=Math.round(rect.width)||400,h=Math.round(rect.height)||450;
+  imuScene=new THREE.Scene();imuScene.background=new THREE.Color(0x060612);
+  imuCamera=new THREE.PerspectiveCamera(50,w/h,0.1,100);
+  imuCamera.position.set(2,1.5,2);imuCamera.lookAt(0,0,0);
+  imuRenderer=new THREE.WebGLRenderer({antialias:true});
+  imuRenderer.setSize(w,h);el.appendChild(imuRenderer.domElement);
+  new ResizeObserver(()=>{const rw=el.clientWidth,rh=el.clientHeight;if(rw>0&&rh>0){imuCamera.aspect=rw/rh;imuCamera.updateProjectionMatrix();imuRenderer.setSize(rw,rh)}}).observe(el);
+  imuScene.add(new THREE.AmbientLight(0x404060,0.5));
+  const dl=new THREE.DirectionalLight(0xffffff,0.8);dl.position.set(3,3,3);imuScene.add(dl);
+  imuScene.add(new THREE.GridHelper(4,8,0x1a1a3a,0x111128));
+  imuScene.add(new THREE.AxesHelper(1.5));
+  imuBox=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.7,0.25),new THREE.MeshStandardMaterial({color:0x4466aa,roughness:0.4,metalness:0.6,transparent:true,opacity:0.85}));
+  imuScene.add(imuBox);
+  const arrow=new THREE.Mesh(new THREE.ConeGeometry(0.05,0.3,8),new THREE.MeshBasicMaterial({color:0xef4444}));
+  arrow.position.y=-0.5;imuBox.add(arrow);
+  const fwd=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.04,0.15),new THREE.MeshBasicMaterial({color:0x22c55e}));
+  fwd.position.z=0.18;imuBox.add(fwd);
+  (function a(){requestAnimationFrame(a);imuRenderer.render(imuScene,imuCamera)})();
+}
+function imuStart(){
+  log('Starting IMU...');fetch('/api/imu/start');
+  if(imuPI)clearInterval(imuPI);
+  imuPI=setInterval(async()=>{
+    const d=await api('/api/imu/data');
+    if(d&&d.o){if(imuBox)imuBox.quaternion.set(d.o[0],d.o[2],-d.o[1],d.o[3]);
+      document.getElementById('imuOx').textContent=d.o[0].toFixed(4);
+      document.getElementById('imuOy').textContent=d.o[1].toFixed(4);
+      document.getElementById('imuOz').textContent=d.o[2].toFixed(4);
+      document.getElementById('imuOw').textContent=d.o[3].toFixed(4);
+    }
+    if(d&&d.av){document.getElementById('imuAx').textContent=d.av[0].toFixed(4);document.getElementById('imuAy').textContent=d.av[1].toFixed(4);document.getElementById('imuAz').textContent=d.av[2].toFixed(4)}
+    if(d&&d.la){
+      document.getElementById('imuLx').textContent=d.la[0].toFixed(4);document.getElementById('imuLy').textContent=d.la[1].toFixed(4);document.getElementById('imuLz').textContent=d.la[2].toFixed(4);
+      imuHist.x.push(d.la[0]);imuHist.y.push(d.la[1]);imuHist.z.push(d.la[2]);
+      if(imuHist.x.length>IMU_HL){imuHist.x.shift();imuHist.y.shift();imuHist.z.shift()}
+      drawImuGraph();
+    }
+  },100);
+}
+function imuStop(){if(imuPI){clearInterval(imuPI);imuPI=null}fetch('/api/imu/stop');log('IMU stopped')}
+function drawImuGraph(){
+  const c=document.getElementById('imuGraph');if(!c)return;const ctx=c.getContext('2d');
+  const w=c.width,h=c.height;ctx.fillStyle='#0a0a14';ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle='rgba(255,255,255,0.05)';ctx.beginPath();ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.stroke();
+  const colors=['#ef4444','#22c55e','#6366f1'],data=[imuHist.x,imuHist.y,imuHist.z],labels=['X','Y','Z'];
+  const scale=h/30;
+  data.forEach((arr,ci)=>{
+    if(arr.length<2)return;ctx.strokeStyle=colors[ci];ctx.lineWidth=1.5;ctx.beginPath();
+    arr.forEach((v,i)=>{const x=(i/IMU_HL)*w,y=h/2-v*scale;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});
+    ctx.stroke();ctx.fillStyle=colors[ci];ctx.font='10px JetBrains Mono,monospace';
+    ctx.fillText(labels[ci]+': '+(arr[arr.length-1]||0).toFixed(1),5,12+ci*12);
+  });
+}
+
+// ── Terminal ──
+function clearTerm(){document.getElementById('termOutput').innerHTML=''}
+let termHistory=[],termHistIdx=-1;
+document.getElementById('termInput').addEventListener('keydown',async e=>{
+  if(e.key==='Enter'){
+    const cmd=e.target.value.trim();if(!cmd)return;
+    e.target.value='';termHistory.unshift(cmd);termHistIdx=-1;
+    termCmd(cmd);
+  }else if(e.key==='ArrowUp'){
+    e.preventDefault();if(termHistIdx<termHistory.length-1){termHistIdx++;e.target.value=termHistory[termHistIdx]}
+  }else if(e.key==='ArrowDown'){
+    e.preventDefault();if(termHistIdx>0){termHistIdx--;e.target.value=termHistory[termHistIdx]}else{termHistIdx=-1;e.target.value=''}
+  }
+});
+async function termCmd(cmd){
+  const out=document.getElementById('termOutput');
+  out.innerHTML+=`<span class="cmd">$ ${cmd}</span>\n`;out.scrollTop=out.scrollHeight;
+  const r=await api('/api/terminal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})});
+  out.innerHTML+=`<span class="out">${(r.output||'').replace(/</g,'&lt;')}</span>\n`;
+  out.scrollTop=out.scrollHeight;
 }
 
 // ── Init ──
-document.getElementById('hostAddr').textContent = location.host;
-loadWfList();
-renderWfSteps();
+document.getElementById('hostAddr').textContent=location.host;
+loadWfList();renderWfSteps();
 </script>
 </body>
 </html>
