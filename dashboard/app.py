@@ -537,10 +537,11 @@ def execute_workflow(workflow):
                         f"aimdk_msgs/srv/SetMcPresetMotion "
                         f"'{{motion: {{value: {mid}}}, area: {{value: {aid}}}, interrupt: false}}'")
         elif stype == "tts":
-            text = params.get("text", "Hello").replace("'", "").replace('"', '')
-            r = ssh_cmd(f"ros2 service call /aimdk_5Fmsgs/srv/PlayTts aimdk_msgs/srv/PlayTts "
-                        f"'{{tts_req: {{text: \"{text}\", domain: demo, trace_id: test, "
-                        f"is_interrupted: true, priority_weight: 0, priority_level: {{value: 6}}}}}}'")
+            text = params.get("text", "Hello").replace("'", "").replace('"', '').replace('\\', '')
+            encoded = base64.b64encode(TTS_SCRIPT.encode()).decode()
+            r = ssh_cmd(
+                f'{SETUP_CMD} >/dev/null 2>&1; echo {encoded} | base64 -d > /tmp/_tts_play.py && python3 /tmp/_tts_play.py "{text}"',
+                timeout=25)
         elif stype == "mode":
             r = ssh_cmd(f"ros2 service call /aimdk_5Fmsgs/srv/SetMcAction "
                         f"aimdk_msgs/srv/SetMcAction "
@@ -626,13 +627,63 @@ def api_mode(mode):
         f"'{{command: {{action_desc: \"{modes[mode]}\"}}}}'")})
 
 
+TTS_SCRIPT = r'''
+import rclpy, subprocess, sys, os, time, wave
+from rclpy.node import Node
+from aimdk_msgs.srv import PlayAudioFile, RequestAudioFocus
+
+text = sys.argv[1] if len(sys.argv) > 1 else "Hello"
+model = "/agibot/data/home/agi/stage_v3/data/piper_voices/en_US-hfc_female-medium.onnx"
+wav_path = "/tmp/_tts.wav"
+
+subprocess.run(
+    'echo "' + text + '" | /agibot/data/home/agi/.local/bin/piper -m ' + model + ' --output_file ' + wav_path,
+    shell=True, capture_output=True, timeout=15)
+if not os.path.exists(wav_path):
+    print("TTS generation failed"); sys.exit(1)
+
+with wave.open(wav_path, "rb") as wf:
+    sr = wf.getframerate()
+    ch = wf.getnchannels()
+
+rclpy.init()
+node = Node("tts_play")
+
+fc = node.create_client(RequestAudioFocus, "/aimdk_5Fmsgs/srv/RequestAudioFocus")
+if fc.wait_for_service(timeout_sec=3.0):
+    ft = fc.call_async(RequestAudioFocus.Request())
+    rclpy.spin_until_future_complete(node, ft, timeout_sec=3.0)
+
+cli = node.create_client(PlayAudioFile, "/aimdk_5Fmsgs/srv/PlayAudioFile")
+if cli.wait_for_service(timeout_sec=5.0):
+    req = PlayAudioFile.Request()
+    req.file.file_path = wav_path
+    req.file.file_name = "_tts.wav"
+    req.file.pkg_name = "tts"
+    req.file.info.channels = ch
+    req.file.info.sample_rate = sr
+    req.file.info.sample_format = "S16LE"
+    req.file.info.coding_format = "wav"
+    req.file.priority = 10
+    ft2 = cli.call_async(req)
+    rclpy.spin_until_future_complete(node, ft2, timeout_sec=8.0)
+    print("Spoke: " + text)
+else:
+    print("PlayAudioFile service not available")
+
+node.destroy_node()
+rclpy.shutdown()
+'''
+
+
 @app.route('/api/tts', methods=['POST'])
 def api_tts():
-    text = request.json.get('text', 'Hello').replace("'", "").replace('"', '')
-    return jsonify({"result": ssh_cmd(
-        f"ros2 service call /aimdk_5Fmsgs/srv/PlayTts aimdk_msgs/srv/PlayTts "
-        f"'{{tts_req: {{text: \"{text}\", domain: demo, trace_id: test, "
-        f"is_interrupted: true, priority_weight: 0, priority_level: {{value: 6}}}}}}'")})
+    text = request.json.get('text', 'Hello').replace("'", "").replace('"', '').replace('\\', '')
+    encoded = base64.b64encode(TTS_SCRIPT.encode()).decode()
+    result = ssh_cmd(
+        f'{SETUP_CMD} >/dev/null 2>&1; echo {encoded} | base64 -d > /tmp/_tts_play.py && python3 /tmp/_tts_play.py "{text}"',
+        timeout=25)
+    return jsonify({"result": result})
 
 
 @app.route('/api/topics')
