@@ -27,7 +27,7 @@ The system lets you control every aspect of the robot from a browser — arm mot
 
 **Dashboard (app.py, port 5000)** runs on your laptop. It connects to the robot via SSH multiplexing for ROS 2 commands and via HTTP to the robot server for sensor streams.
 
-**Robot Server (robot_server.py, port 8080)** runs on the robot itself. It subscribes to ROS 2 camera, LiDAR, and IMU topics via subprocess-spawned Python nodes, then serves the data over HTTP to the dashboard.
+**Robot Server (robot_server.py, port 8080)** runs on the robot itself. It subscribes to ROS 2 camera, LiDAR, and IMU topics via subprocess-spawned Python nodes, then serves the data over HTTP to the dashboard. It also handles text-to-speech via piper, forwarding audio to the SOC2 speaker board through a local play_bridge service (port 8081).
 
 **n8n (port 5678)** runs in Docker on your laptop. It triggers robot actions via webhooks to the dashboard API.
 
@@ -37,7 +37,7 @@ The system lets you control every aspect of the robot from a browser — arm mot
 
 | Tab | What it does |
 |-----|-------------|
-| **Controls** | Camera feeds (6 cameras), 20+ arm motions, 10 face emojis, text-to-speech, WASD walk control, YOLO / motion detection / face recognition toggles |
+| **Controls** | Camera feeds (6 cameras), 20+ arm motions, 10 face emojis, text-to-speech (piper TTS engine), WASD walk control, YOLO / motion detection / face recognition toggles |
 | **URDF Sim** | Real-time 3D visualizer loading actual X2 Ultra STL meshes from the URDF. 31 joint sliders grouped by body part (collapsible). Preset poses: stand, crouch, sit, T-pose, bow, hands-up. Animations: wave, walk, dance, look around |
 | **LiDAR** | Live 3D point cloud map from the chest-mounted LiDAR. Accumulates points over time with height-based coloring |
 | **Workflows** | Visual workflow builder — chain emoji, TTS, motions, waits, shell commands, and n8n webhooks into reusable sequences |
@@ -72,12 +72,12 @@ The system lets you control every aspect of the robot from a browser — arm mot
 
 | Camera | ROS 2 Topic |
 |--------|------------|
-| Head Front Center | `/aima/hal/sensor/rgb_head_front_center/rgb_image/compressed` |
+| Head Front Center | `/aima/hal/sensor/rgb_head_front_center/rgb_image/compressed` (auto-flipped 180) |
 | RGBD Front | `/aima/hal/sensor/rgbd_head_front/rgb_image/compressed` |
-| Depth | `/camera/depth/image_raw/compressedDepth` |
+| Depth | `/camera/depth/image_raw/compressedDepth` (auto-flipped 180) |
 | Stereo Left | `/aima/hal/sensor/stereo_head_front_left/rgb_image/compressed` |
 | Stereo Right | `/aima/hal/sensor/stereo_head_front_right/rgb_image/compressed` |
-| Head Rear | `/aima/hal/sensor/rgb_head_rear/rgb_image/compressed` |
+| Head Rear | `/aima/hal/sensor/rgb_head_rear/rgb_image/compressed` (auto-flipped 180) |
 
 ## Setup
 
@@ -87,6 +87,7 @@ The system lets you control every aspect of the robot from a browser — arm mot
 - `sshpass` (for SSH to robot)
 - `opencv-python`, `numpy`, `flask` Python packages
 - Docker + Docker Compose (for n8n, optional)
+- [piper](https://github.com/rhasspy/piper) TTS engine installed on the robot (for text-to-speech)
 - The robot must be on the same network as your machine
 
 ### 1. Install dependencies
@@ -113,7 +114,7 @@ sshpass -p 1 scp robot_server.py agi@<ROBOT_IP>:~/
 sshpass -p 1 ssh agi@<ROBOT_IP> "bash -i -c 'nohup python3 ~/robot_server.py &'"
 ```
 
-This runs the sensor bridge on port 8080 on the robot. It subscribes to ROS 2 camera/LiDAR/IMU topics and serves them over HTTP.
+This runs the sensor bridge on port 8080 on the robot. It subscribes to ROS 2 camera/LiDAR/IMU topics and serves them over HTTP. It also provides the `/tts` endpoint using piper for speech synthesis.
 
 ### 4. Start the dashboard
 
@@ -189,7 +190,7 @@ The dashboard exposes a REST API on port 5000:
 GET  /api/emoji/<id>              Play face emoji
 GET  /api/motion/<action>         Arm motion (wave_left, handshake_right, etc.)
 GET  /api/mode/<mode>             Set mode (stand, locomotion, passive, etc.)
-POST /api/tts                     {"text": "Hello"}
+POST /api/tts                     {"text": "Hello"} — via piper on robot server
 POST /api/preset_motion           {"motion_id": 3017, "area_id": 11}
 POST /api/walk/vel                {"f": 0.3, "a": 0.0, "l": 0.0}
 ```
@@ -203,6 +204,20 @@ GET  /api/lidar/start             Start LiDAR point cloud
 GET  /api/lidar/points            Get current points
 GET  /api/imu/start               Start IMU stream
 GET  /api/imu/data                Get orientation/acceleration
+```
+
+### Robot Server (port 8080)
+
+The robot server also exposes its own endpoints directly:
+
+```
+POST /tts                         {"text": "Hello"} — piper TTS via play_bridge
+GET  /cam?topic=...               Start camera subscription
+GET  /frame                       Get latest JPEG frame
+GET  /lidar/start                 Start LiDAR stream
+GET  /lidar/points                Get LiDAR point cloud
+GET  /imu/start                   Start IMU stream
+GET  /imu/data                    Get IMU orientation/acceleration
 ```
 
 ### AI Vision
