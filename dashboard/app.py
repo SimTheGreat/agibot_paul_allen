@@ -124,13 +124,15 @@ def process_frame_ai(jpeg_bytes):
     return out.tobytes() if ok else jpeg_bytes
 
 # ── Config ──────────────────────────────────────────────────────
-ROBOT_HOST = "agi@10.104.218.77"
+ROBOT_HOST = "agi@10.0.1.41"
 ROBOT_PASS = "1"
-ROBOT_IP = "10.104.218.77"
-SETUP_CMD = "source ~/Botifull/SLAM_stack/scripts/setup_env.sh && export FASTRTPS_DEFAULT_PROFILES_FILE=/agibot/data/home/agi/.aima/env/ros_dds_configuration.xml"
+ROBOT_IP = "10.0.1.41"
+SETUP_CMD = "source /opt/ros/humble/setup.bash && source ~/sdk_ws/install/setup.bash && export FASTRTPS_DEFAULT_PROFILES_FILE=/agibot/data/home/agi/.aima/env/ros_dds_configuration.xml"
 SSH_SOCKET = "/tmp/agibot_ssh_ctl"
 N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "")
-ROBOT_SERVER = f"http://{ROBOT_IP}:8080"  # robot_server.py running on robot
+ROBOT_SERVER = f"http://{ROBOT_IP}:8080"  # robot_server.py on SOC1 (control)
+SENSOR_IP = "10.0.1.42"
+SENSOR_SERVER = f"http://{SENSOR_IP}:8080"  # robot_server.py on SOC2 (cameras, lidar, IMU)
 
 # ── State ───────────────────────────────────────────────────────
 camera_process = None
@@ -538,10 +540,17 @@ def execute_workflow(workflow):
                         f"'{{motion: {{value: {mid}}}, area: {{value: {aid}}}, interrupt: false}}'")
         elif stype == "tts":
             text = params.get("text", "Hello").replace("'", "").replace('"', '').replace('\\', '')
-            encoded = base64.b64encode(TTS_SCRIPT.encode()).decode()
-            r = ssh_cmd(
-                f'{SETUP_CMD} >/dev/null 2>&1; echo {encoded} | base64 -d > /tmp/_tts_play.py && python3 /tmp/_tts_play.py "{text}"',
-                timeout=25)
+            try:
+                import urllib.request
+                data = json.dumps({"text": text}).encode()
+                req_obj = urllib.request.Request(
+                    f"{ROBOT_SERVER}/tts", data=data,
+                    headers={"Content-Type": "application/json"})
+                resp = urllib.request.urlopen(req_obj, timeout=25)
+                rr = json.loads(resp.read().decode())
+                r = f"Spoke: {text}" if rr.get("status") == "ok" else rr.get("error", "error")
+            except Exception as e:
+                r = f"TTS error: {e}"
         elif stype == "mode":
             r = ssh_cmd(f"ros2 service call /aimdk_5Fmsgs/srv/SetMcAction "
                         f"aimdk_msgs/srv/SetMcAction "
@@ -627,63 +636,26 @@ def api_mode(mode):
         f"'{{command: {{action_desc: \"{modes[mode]}\"}}}}'")})
 
 
-TTS_SCRIPT = r'''
-import rclpy, subprocess, sys, os, time, wave
-from rclpy.node import Node
-from aimdk_msgs.srv import PlayAudioFile, RequestAudioFocus
-
-text = sys.argv[1] if len(sys.argv) > 1 else "Hello"
-model = "/agibot/data/home/agi/stage_v3/data/piper_voices/en_US-hfc_female-medium.onnx"
-wav_path = "/tmp/_tts.wav"
-
-subprocess.run(
-    'echo "' + text + '" | /agibot/data/home/agi/.local/bin/piper -m ' + model + ' --output_file ' + wav_path,
-    shell=True, capture_output=True, timeout=15)
-if not os.path.exists(wav_path):
-    print("TTS generation failed"); sys.exit(1)
-
-with wave.open(wav_path, "rb") as wf:
-    sr = wf.getframerate()
-    ch = wf.getnchannels()
-
-rclpy.init()
-node = Node("tts_play")
-
-fc = node.create_client(RequestAudioFocus, "/aimdk_5Fmsgs/srv/RequestAudioFocus")
-if fc.wait_for_service(timeout_sec=3.0):
-    ft = fc.call_async(RequestAudioFocus.Request())
-    rclpy.spin_until_future_complete(node, ft, timeout_sec=3.0)
-
-cli = node.create_client(PlayAudioFile, "/aimdk_5Fmsgs/srv/PlayAudioFile")
-if cli.wait_for_service(timeout_sec=5.0):
-    req = PlayAudioFile.Request()
-    req.file.file_path = wav_path
-    req.file.file_name = "_tts.wav"
-    req.file.pkg_name = "tts"
-    req.file.info.channels = ch
-    req.file.info.sample_rate = sr
-    req.file.info.sample_format = "S16LE"
-    req.file.info.coding_format = "wav"
-    req.file.priority = 10
-    ft2 = cli.call_async(req)
-    rclpy.spin_until_future_complete(node, ft2, timeout_sec=8.0)
-    print("Spoke: " + text)
-else:
-    print("PlayAudioFile service not available")
-
-node.destroy_node()
-rclpy.shutdown()
-'''
+PIPER_BIN = "/agibot/data/home/agi/.local/bin/piper"
+PIPER_MODEL = "/agibot/data/home/agi/stage_v3/data/piper_voices/en_US-hfc_female-medium.onnx"
+SOC2_HOST = "agi@10.0.1.42"
+SOC2_ALSA = "plug:playback_def"
 
 
 @app.route('/api/tts', methods=['POST'])
 def api_tts():
     text = request.json.get('text', 'Hello').replace("'", "").replace('"', '').replace('\\', '')
-    encoded = base64.b64encode(TTS_SCRIPT.encode()).decode()
-    result = ssh_cmd(
-        f'{SETUP_CMD} >/dev/null 2>&1; echo {encoded} | base64 -d > /tmp/_tts_play.py && python3 /tmp/_tts_play.py "{text}"',
-        timeout=25)
-    return jsonify({"result": result})
+    try:
+        import urllib.request
+        data = json.dumps({"text": text}).encode()
+        req = urllib.request.Request(
+            f"{ROBOT_SERVER}/tts", data=data,
+            headers={"Content-Type": "application/json"})
+        resp = urllib.request.urlopen(req, timeout=25)
+        result = json.loads(resp.read().decode())
+        return jsonify({"result": f"Spoke: {text}" if result.get("status") == "ok" else result.get("error", "unknown error")})
+    except Exception as e:
+        return jsonify({"result": f"TTS error: {e}"})
 
 
 @app.route('/api/topics')
@@ -697,7 +669,7 @@ def api_camera_start():
     cam = request.args.get('cam', 'depth')
     try:
         import urllib.request
-        urllib.request.urlopen(f"{ROBOT_SERVER}/camera/start?cam={cam}", timeout=5)
+        urllib.request.urlopen(f"{SENSOR_SERVER}/camera/start?cam={cam}", timeout=5)
         return jsonify({"status": "started", "cam": cam})
     except Exception as e:
         # Fallback to SSH method
@@ -708,7 +680,7 @@ def api_camera_start():
 def api_camera_stop():
     try:
         import urllib.request
-        urllib.request.urlopen(f"{ROBOT_SERVER}/camera/stop", timeout=5)
+        urllib.request.urlopen(f"{SENSOR_SERVER}/camera/stop", timeout=5)
     except Exception:
         stop_camera()
     return jsonify({"status": "stopped"})
@@ -719,7 +691,7 @@ def api_camera_frame():
     # Try robot server first
     try:
         import urllib.request
-        resp = urllib.request.urlopen(f"{ROBOT_SERVER}/camera/frame", timeout=2)
+        resp = urllib.request.urlopen(f"{SENSOR_SERVER}/camera/frame", timeout=2)
         if resp.status == 200:
             frame = resp.read()
     except Exception:
@@ -744,7 +716,7 @@ def api_camera_stream():
     """Direct MJPEG proxy from robot server."""
     try:
         import urllib.request
-        resp = urllib.request.urlopen(f"{ROBOT_SERVER}/camera/stream", timeout=30)
+        resp = urllib.request.urlopen(f"{SENSOR_SERVER}/camera/stream", timeout=30)
         def gen():
             while True:
                 chunk = resp.read(65536)
@@ -753,6 +725,60 @@ def api_camera_stream():
         return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
     except Exception:
         return Response(b'', status=503)
+
+# ── Multi-Camera routes ──────────────────────────────────────────
+
+@app.route('/api/cameras/start_all')
+def api_cameras_start_all():
+    try:
+        import urllib.request
+        resp = urllib.request.urlopen(f"{SENSOR_SERVER}/cameras/start_all", timeout=10)
+        return Response(resp.read(), mimetype='application/json')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/cameras/stop_all')
+def api_cameras_stop_all():
+    try:
+        import urllib.request
+        urllib.request.urlopen(f"{SENSOR_SERVER}/cameras/stop_all", timeout=5)
+    except Exception:
+        pass
+    return jsonify({"status": "stopped"})
+
+FLIP_CAMS = {'head_front', 'head_rear'}
+
+@app.route('/api/cameras/frame/<cam_key>')
+def api_cameras_frame(cam_key):
+    try:
+        import urllib.request
+        resp = urllib.request.urlopen(f"{SENSOR_SERVER}/cameras/frame/{cam_key}", timeout=2)
+        if resp.status == 200:
+            frame = resp.read()
+            img = cv2.imdecode(np.frombuffer(frame, np.uint8), cv2.IMREAD_COLOR)
+            if img is not None:
+                if cam_key in FLIP_CAMS:
+                    img = cv2.rotate(img, cv2.ROTATE_180)
+                h, w = img.shape[:2]
+                if w > 640:
+                    scale = 640 / w
+                    img = cv2.resize(img, (640, int(h * scale)))
+                ok, out = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                if ok:
+                    frame = out.tobytes()
+            return Response(frame, mimetype='image/jpeg')
+    except Exception:
+        pass
+    return Response(b'', status=204)
+
+@app.route('/api/cameras/status')
+def api_cameras_status():
+    try:
+        import urllib.request
+        resp = urllib.request.urlopen(f"{SENSOR_SERVER}/cameras/status", timeout=2)
+        return Response(resp.read(), mimetype='application/json')
+    except Exception:
+        return jsonify({"active": {}, "has_frame": {}})
 
 # Walk
 # ── AI Vision routes ─────────────────────────────────────────────
@@ -811,7 +837,7 @@ def api_ai_status():
 def api_imu_start():
     try:
         import urllib.request
-        urllib.request.urlopen(f"{ROBOT_SERVER}/imu/start", timeout=5)
+        urllib.request.urlopen(f"{SENSOR_SERVER}/imu/start", timeout=5)
         return jsonify({"status": "started"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -820,7 +846,7 @@ def api_imu_start():
 def api_imu_stop():
     try:
         import urllib.request
-        urllib.request.urlopen(f"{ROBOT_SERVER}/imu/stop", timeout=5)
+        urllib.request.urlopen(f"{SENSOR_SERVER}/imu/stop", timeout=5)
     except Exception:
         pass
     return jsonify({"status": "stopped"})
@@ -829,7 +855,7 @@ def api_imu_stop():
 def api_imu_data():
     try:
         import urllib.request
-        resp = urllib.request.urlopen(f"{ROBOT_SERVER}/imu/data", timeout=2)
+        resp = urllib.request.urlopen(f"{SENSOR_SERVER}/imu/data", timeout=2)
         return Response(resp.read(), mimetype='application/json')
     except Exception:
         return jsonify({})
@@ -855,7 +881,7 @@ def api_walk_vel():
 def api_lidar_start():
     try:
         import urllib.request
-        urllib.request.urlopen(f"{ROBOT_SERVER}/lidar/start", timeout=5)
+        urllib.request.urlopen(f"{SENSOR_SERVER}/lidar/start", timeout=5)
         return jsonify({"status": "started"})
     except Exception:
         start_lidar()
@@ -865,7 +891,7 @@ def api_lidar_start():
 def api_lidar_stop():
     try:
         import urllib.request
-        urllib.request.urlopen(f"{ROBOT_SERVER}/lidar/stop", timeout=5)
+        urllib.request.urlopen(f"{SENSOR_SERVER}/lidar/stop", timeout=5)
     except Exception:
         stop_lidar()
     return jsonify({"status": "stopped"})
@@ -874,7 +900,7 @@ def api_lidar_stop():
 def api_lidar_points():
     try:
         import urllib.request
-        resp = urllib.request.urlopen(f"{ROBOT_SERVER}/lidar/points", timeout=3)
+        resp = urllib.request.urlopen(f"{SENSOR_SERVER}/lidar/points", timeout=3)
         return Response(resp.read(), mimetype='application/json')
     except Exception:
         with lidar_lock:
@@ -1094,9 +1120,18 @@ def api_system_status():
     except Exception:
         pass
 
+    sensor_ok = False
+    try:
+        import urllib.request
+        resp = urllib.request.urlopen(f"{SENSOR_SERVER}/health", timeout=2)
+        sensor_ok = resp.status == 200
+    except Exception:
+        pass
+
     return jsonify({
         "ssh": ssh_ok,
         "robot_server": robot_ok,
+        "sensor_server": sensor_ok,
         "camera": camera_process is not None,
         "walk": walk_process is not None,
         "lidar": lidar_process is not None,

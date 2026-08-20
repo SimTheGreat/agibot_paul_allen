@@ -27,6 +27,12 @@ cam_lock = threading.Lock()
 cam_active = False
 cam_current_topic = None
 
+# Multi-camera support
+cam_frames = {}   # cam_key -> jpeg bytes
+cam_frames_lock = threading.Lock()
+cam_procs = {}    # cam_key -> subprocess
+cam_procs_lock = threading.Lock()
+
 lidar_points = []
 lidar_lock = threading.Lock()
 lidar_proc = None
@@ -35,24 +41,26 @@ lidar_proc = None
 # ── Camera streaming via subprocess ─────────────────────────────
 
 CAM_STREAMER = '''
-import rclpy, sys, struct, cv2, numpy as np
+import rclpy, sys, struct, cv2, numpy as np, os
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image
 
 TOPIC = sys.argv[1]
 IS_RAW = "/compressed" not in TOPIC and "compressedDepth" not in TOPIC
+NODE_NAME = "cam_sub_" + str(os.getpid())
 
 class S(Node):
     def __init__(self):
-        super().__init__("cam_sub")
+        super().__init__(NODE_NAME)
         msg_type = Image if IS_RAW else CompressedImage
-        for rel in [QoSReliabilityPolicy.RELIABLE, QoSReliabilityPolicy.BEST_EFFORT]:
-            for dur in [QoSDurabilityPolicy.TRANSIENT_LOCAL, QoSDurabilityPolicy.VOLATILE]:
-                qos = QoSProfile(reliability=rel,
-                                  history=QoSHistoryPolicy.KEEP_LAST, depth=1,
-                                  durability=dur)
-                self.create_subscription(msg_type, TOPIC, self.cb, qos)
+        # Match publisher QoS: RELIABLE + TRANSIENT_LOCAL (primary)
+        # Also try RELIABLE + VOLATILE as fallback
+        for dur in [QoSDurabilityPolicy.TRANSIENT_LOCAL, QoSDurabilityPolicy.VOLATILE]:
+            qos = QoSProfile(reliability=QoSReliabilityPolicy.RELIABLE,
+                              history=QoSHistoryPolicy.KEEP_LAST, depth=5,
+                              durability=dur)
+            self.create_subscription(msg_type, TOPIC, self.cb, qos)
         self.n = 0
         sys.stderr.write(f"Subscribing to {TOPIC} as {'Image' if IS_RAW else 'CompressedImage'}\\n")
         sys.stderr.flush()
@@ -85,7 +93,17 @@ class S(Node):
                 if not ok: return
                 d = jpeg.tobytes()
             else:
-                d = bytes(msg.data)
+                raw = bytes(msg.data)
+                # Check if it's valid JPEG (starts with FFD8)
+                if len(raw) > 2 and raw[0] == 0xFF and raw[1] == 0xD8:
+                    d = raw
+                else:
+                    # Non-JPEG compressed: decode and re-encode
+                    img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+                    if img is None: return
+                    ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    if not ok: return
+                    d = jpeg.tobytes()
             sys.stdout.buffer.write(struct.pack(">I", len(d)))
             sys.stdout.buffer.write(d)
             sys.stdout.buffer.flush()
@@ -180,6 +198,7 @@ rclpy.spin(I())
 # Topics that need 180-degree flip
 FLIP_TOPICS = {
     '/camera/depth/image_raw/compressedDepth',
+    '/aima/hal/sensor/rgb_head_front_center/rgb_image',
     '/aima/hal/sensor/rgb_head_front_center/rgb_image/compressed',
     '/aima/hal/sensor/rgb_head_rear/rgb_image/compressed',
 }
@@ -235,6 +254,7 @@ def start_cam_process(topic):
                 if not cam_active:
                     continue  # paused, keep reading but don't update frame
 
+                needs_flip = topic in FLIP_TOPICS
                 is_depth = "compressedDepth" in topic
                 if is_depth:
                     if len(data) <= 12: continue
@@ -246,9 +266,19 @@ def start_cam_process(topic):
                     elif img.dtype == np.float32:
                         img = (img * 50).clip(0, 255).astype(np.uint8)
                     img = cv2.applyColorMap(img, cv2.COLORMAP_JET)
+                    if needs_flip:
+                        img = cv2.rotate(img, cv2.ROTATE_180)
                     ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])
                     if not ok: continue
                     frame = jpeg.tobytes()
+                elif needs_flip:
+                    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                    if img is None:
+                        frame = data
+                    else:
+                        img = cv2.rotate(img, cv2.ROTATE_180)
+                        ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                        frame = jpeg.tobytes() if ok else data
                 else:
                     frame = data
 
@@ -284,6 +314,84 @@ def kill_cam_process():
             except: pass
             cam_proc = None
             cam_current_topic = None
+
+
+def start_multi_cam(cam_key, topic):
+    """Start a camera subprocess for a specific cam key."""
+    stop_multi_cam(cam_key)
+    script_path = write_helper(f"cam_{cam_key}", CAM_STREAMER)
+    env = get_ros_env()
+    proc = subprocess.Popen(
+        ["python3", "-u", script_path, topic],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    with cam_procs_lock:
+        cam_procs[cam_key] = proc
+
+    def reader():
+        try:
+            while proc.poll() is None:
+                hdr = proc.stdout.read(4)
+                if len(hdr) < 4: break
+                length = struct.unpack(">I", hdr)[0]
+                if length > 5_000_000 or length == 0: continue
+                data = proc.stdout.read(length)
+                if len(data) != length: continue
+                needs_flip = topic in FLIP_TOPICS
+                is_depth = "compressedDepth" in topic
+                if is_depth:
+                    if len(data) <= 12: continue
+                    png = data[12:]
+                    img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_UNCHANGED)
+                    if img is None: continue
+                    if img.dtype == np.uint16:
+                        img = (img / 16).clip(0, 255).astype(np.uint8)
+                    elif img.dtype == np.float32:
+                        img = (img * 50).clip(0, 255).astype(np.uint8)
+                    img = cv2.applyColorMap(img, cv2.COLORMAP_JET)
+                    if needs_flip:
+                        img = cv2.rotate(img, cv2.ROTATE_180)
+                    ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    if not ok: continue
+                    frame = jpeg.tobytes()
+                elif needs_flip:
+                    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                    if img is None:
+                        frame = data
+                    else:
+                        img = cv2.rotate(img, cv2.ROTATE_180)
+                        ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                        frame = jpeg.tobytes() if ok else data
+                else:
+                    frame = data
+                with cam_frames_lock:
+                    cam_frames[cam_key] = frame
+        except Exception as e:
+            print(f"Multi-cam reader {cam_key} error: {e}", flush=True)
+        finally:
+            with cam_procs_lock:
+                if cam_procs.get(cam_key) == proc:
+                    del cam_procs[cam_key]
+
+    threading.Thread(target=reader, daemon=True).start()
+
+
+def stop_multi_cam(cam_key):
+    with cam_procs_lock:
+        proc = cam_procs.pop(cam_key, None)
+    if proc:
+        try:
+            subprocess.run(["pkill", "-9", "-P", str(proc.pid)], timeout=3)
+            proc.kill()
+        except: pass
+    with cam_frames_lock:
+        cam_frames.pop(cam_key, None)
+
+
+def stop_all_cams():
+    with cam_procs_lock:
+        keys = list(cam_procs.keys())
+    for k in keys:
+        stop_multi_cam(k)
 
 
 def start_lidar_process():
@@ -370,7 +478,7 @@ def stop_imu_process():
 # ── Routes ──────────────────────────────────────────────────────
 
 CAMERA_TOPICS = {
-    'head_front': '/aima/hal/sensor/rgb_head_front_center/rgb_image',
+    'head_front': '/aima/hal/sensor/rgb_head_front_center/rgb_image/compressed',
     'depth': '/camera/depth/image_raw/compressedDepth',
     'rgbd_front': '/aima/hal/sensor/rgbd_head_front/rgb_image/compressed',
     'stereo_left': '/aima/hal/sensor/stereo_head_front_left/rgb_image/compressed',
@@ -421,6 +529,40 @@ def camera_stream():
     return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
+@app.route('/cameras/start_all')
+def cameras_start_all():
+    """Start all cameras simultaneously."""
+    started = []
+    for key, topic in CAMERA_TOPICS.items():
+        start_multi_cam(key, topic)
+        started.append(key)
+    return jsonify({"status": "started", "cameras": started})
+
+
+@app.route('/cameras/stop_all')
+def cameras_stop_all():
+    stop_all_cams()
+    return jsonify({"status": "stopped"})
+
+
+@app.route('/cameras/frame/<cam_key>')
+def cameras_frame(cam_key):
+    with cam_frames_lock:
+        f = cam_frames.get(cam_key)
+    if f:
+        return Response(f, mimetype='image/jpeg')
+    return Response(b'', status=204)
+
+
+@app.route('/cameras/status')
+def cameras_status():
+    with cam_procs_lock:
+        active = {k: p.poll() is None for k, p in cam_procs.items()}
+    with cam_frames_lock:
+        has_frame = {k: True for k in cam_frames}
+    return jsonify({"active": active, "has_frame": has_frame})
+
+
 @app.route('/lidar/start')
 def lidar_start():
     start_lidar_process()
@@ -457,6 +599,44 @@ def imu_get_data():
     with imu_lock:
         d = imu_data.copy()
     return jsonify(d)
+
+
+# ── TTS via piper + SOC2 speaker ────────────────────────────────
+
+PIPER_BIN = os.path.expanduser("~/.local/bin/piper")
+PIPER_MODEL = os.path.expanduser("~/stage_v3/data/piper_voices/en_US-hfc_female-medium.onnx")
+SOC2_HOST = "agi@10.0.1.42"
+SOC2_ALSA = "plug:playback_def"
+
+
+@app.route('/tts', methods=['POST'])
+def tts():
+    text = (request.json or {}).get('text', 'Hello')
+    text = text.replace('"', '').replace("'", "").replace('\\', '')
+    wav = "/tmp/_tts.wav"
+    try:
+        # Generate WAV with piper
+        subprocess.run(
+            f'echo "{text}" | {PIPER_BIN} -m {PIPER_MODEL} --output_file {wav}',
+            shell=True, capture_output=True, timeout=15)
+        if not os.path.exists(wav):
+            return jsonify({"error": "piper failed"}), 500
+        # Forward to play_bridge's TTS HTTP endpoint (port 8081)
+        # play_bridge runs as systemd service with SOC2 network access + ElevenLabs
+        import urllib.request
+        data = json.dumps({"text": text}).encode()
+        req = urllib.request.Request(
+            "http://127.0.0.1:8081/", data=data,
+            headers={"Content-Type": "application/json"})
+        resp = urllib.request.urlopen(req, timeout=30)
+        result = json.loads(resp.read().decode())
+        if result.get("status") == "ok":
+            return jsonify({"status": "ok", "text": text})
+        return jsonify({"error": result.get("error", "unknown")}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "timeout"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == '__main__':

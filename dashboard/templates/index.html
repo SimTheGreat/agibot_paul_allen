@@ -121,6 +121,14 @@ textarea.input{resize:vertical;font-family:'JetBrains Mono',monospace;font-size:
 .cam-overlay{position:absolute;top:8px;right:8px;display:flex;gap:4px}
 .cam-badge{padding:3px 8px;border-radius:4px;font-size:10px;font-weight:600;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px)}
 .cam-badge.live{color:var(--red);border:1px solid rgba(239,68,68,0.3)}
+/* Multi-camera grid */
+.cam-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+.cam-cell{background:#000;border-radius:var(--radius);aspect-ratio:16/9;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center}
+.cam-cell img{width:100%;height:100%;object-fit:contain}
+.cam-cell .cam-label{position:absolute;bottom:4px;left:6px;font-size:9px;font-weight:600;color:#fff;background:rgba(0,0,0,0.7);padding:2px 6px;border-radius:3px}
+.cam-cell .cam-live-dot{position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;background:var(--red);display:none}
+.cam-cell .cam-live-dot.on{display:block;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
 
 /* 3D Viewer */
 .viewer3d{width:100%;height:450px;border-radius:var(--radius);overflow:hidden;background:#060612;position:relative}
@@ -203,29 +211,22 @@ textarea.input{resize:vertical;font-family:'JetBrains Mono',monospace;font-size:
 <!-- ======= CONTROLS ======= -->
 <div class="page active" id="p-ctrl">
   <div class="grid g2">
-    <div class="card">
-      <div class="card-title"><span class="indicator"></span>Camera Feed</div>
-      <div class="cam-container" id="camBox">
-        <span class="cam-placeholder" id="camPH">Select a camera and press Start</span>
-        <img id="camImg" style="display:none"/>
-        <div class="cam-overlay"><span class="cam-badge live" id="camLive" style="display:none">LIVE</span></div>
-      </div>
-      <div style="display:flex;gap:6px;margin-top:12px;align-items:center">
-        <button class="btn btn-success" onclick="camStart()">Start</button>
-        <button class="btn btn-danger" onclick="camStop()">Stop</button>
-        <select class="input" id="camSel" style="flex:1">
-          <option value="head_front">Head Front Center</option>
-          <option value="depth">Depth Camera</option>
-          <option value="rgbd_front">RGBD Front</option>
-          <option value="stereo_left">Stereo Left</option>
-          <option value="stereo_right">Stereo Right</option>
-          <option value="head_rear">Head Rear</option>
-        </select>
-      </div>
-      <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+    <div class="card" style="grid-column:1/-1">
+      <div class="card-title"><span class="indicator"></span>All Cameras</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
+        <button class="btn btn-success" onclick="allCamsStart()">Start All</button>
+        <button class="btn btn-danger" onclick="allCamsStop()">Stop All</button>
         <button class="btn btn-sm" id="yoloBtn" onclick="toggleYolo()">YOLO: OFF</button>
         <button class="btn btn-sm" id="motionBtn" onclick="toggleMotion()">Motion: OFF</button>
         <button class="btn btn-sm" id="faceBtn" onclick="toggleFaces()">Faces: OFF</button>
+      </div>
+      <div class="cam-grid" id="camGrid">
+        <div class="cam-cell" id="cell_head_front"><span class="cam-placeholder">Head Front</span><img style="display:none"/><div class="cam-live-dot"></div><div class="cam-label">Head Front</div></div>
+        <div class="cam-cell" id="cell_rgbd_front"><span class="cam-placeholder">RGBD Front</span><img style="display:none"/><div class="cam-live-dot"></div><div class="cam-label">RGBD Front</div></div>
+        <div class="cam-cell" id="cell_depth"><span class="cam-placeholder">Depth</span><img style="display:none"/><div class="cam-live-dot"></div><div class="cam-label">Depth</div></div>
+        <div class="cam-cell" id="cell_stereo_left"><span class="cam-placeholder">Stereo Left</span><img style="display:none"/><div class="cam-live-dot"></div><div class="cam-label">Stereo Left</div></div>
+        <div class="cam-cell" id="cell_stereo_right"><span class="cam-placeholder">Stereo Right</span><img style="display:none"/><div class="cam-live-dot"></div><div class="cam-label">Stereo Right</div></div>
+        <div class="cam-cell" id="cell_head_rear"><span class="cam-placeholder">Head Rear</span><img style="display:none"/><div class="cam-live-dot"></div><div class="cam-label">Head Rear</div></div>
       </div>
     </div>
 
@@ -503,7 +504,7 @@ textarea.input{resize:vertical;font-family:'JetBrains Mono',monospace;font-size:
         <div><span style="color:var(--cyan)">ros2 service list</span> - List services</div>
         <div><span style="color:var(--cyan)">ros2 node list</span> - List active nodes</div>
         <div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-top:12px;margin-bottom:4px">Robot Info</div>
-        <div>IP: <span style="color:var(--accent)">10.104.218.77</span></div>
+        <div>IP: <span style="color:var(--accent)">10.209.206.77</span></div>
         <div>ROS: <span style="color:var(--accent)">Humble</span></div>
         <div>User: <span style="color:var(--accent)">agi</span></div>
       </div>
@@ -554,32 +555,45 @@ async function speak(){
 }
 document.getElementById('ttsInput').addEventListener('keydown',e=>{if(e.key==='Enter'){speak();e.preventDefault()}});
 
-// ── Camera ──
-const RS='http://10.104.218.77:8080';
-let camInt=null;
-function camStart(){
-  if(camInt)clearInterval(camInt);camInt=null;
-  const c=document.getElementById('camSel').value;
-  log(`Camera: ${c}`);
-  fetch(RS+'/camera/start?cam='+c).catch(()=>fetch('/api/camera/start?cam='+c));
-  camStartPolling();
+// ── Camera (multi-cam) ──
+const CAM_KEYS=['head_front','rgbd_front','depth','stereo_left','stereo_right','head_rear'];
+let allCamInt=null;
+function allCamsStart(){
+  if(allCamInt)clearInterval(allCamInt);
+  log('Starting all cameras...');
+  fetch('/api/cameras/start_all').then(r=>r.json()).then(d=>{
+    log('Cameras started: '+d.cameras.join(', '));
+    allCamPoll();
+  }).catch(e=>log('Error: '+e));
 }
-function camStop(){
-  if(camInt){clearInterval(camInt);camInt=null}
-  const img=document.getElementById('camImg');img.src='';img.style.display='none';
-  document.getElementById('camPH').style.display='block';
-  document.getElementById('camLive').style.display='none';
-  fetch(RS+'/camera/stop').catch(()=>fetch('/api/camera/stop'));
-  log('Camera stopped');
+function allCamsStop(){
+  if(allCamInt){clearInterval(allCamInt);allCamInt=null}
+  CAM_KEYS.forEach(k=>{
+    const cell=document.getElementById('cell_'+k);
+    if(!cell)return;
+    const img=cell.querySelector('img'),ph=cell.querySelector('.cam-placeholder'),dot=cell.querySelector('.cam-live-dot');
+    img.style.display='none';img.src='';ph.style.display='block';dot.classList.remove('on');
+  });
+  fetch('/api/cameras/stop_all');
+  log('All cameras stopped');
 }
-function camStartPolling(){
-  if(camInt)return;
-  const img=document.getElementById('camImg'),ph=document.getElementById('camPH'),live=document.getElementById('camLive');
-  camInt=setInterval(()=>{
-    const i=new Image();
-    i.onload=()=>{img.src=i.src;img.style.display='block';ph.style.display='none';live.style.display='block'};
-    i.src='/api/camera/frame?'+Date.now();
-  },200);
+function allCamPoll(){
+  if(allCamInt)return;
+  let idx=0;
+  allCamInt=setInterval(()=>{
+    // Load 2 cameras per tick to avoid overwhelming
+    for(let n=0;n<2&&idx<CAM_KEYS.length;n++,idx++){
+      const k=CAM_KEYS[idx];
+      const cell=document.getElementById('cell_'+k);
+      if(!cell)continue;
+      const img=cell.querySelector('img'),ph=cell.querySelector('.cam-placeholder'),dot=cell.querySelector('.cam-live-dot');
+      const i=new Image();
+      i.onload=()=>{img.src=i.src;img.style.display='block';ph.style.display='none';dot.classList.add('on')};
+      i.onerror=()=>{};
+      i.src='/api/cameras/frame/'+k+'?'+Date.now();
+    }
+    if(idx>=CAM_KEYS.length)idx=0;
+  },500);
 }
 
 // ── AI toggles ──
